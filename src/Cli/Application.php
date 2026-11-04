@@ -14,7 +14,7 @@ use PopChain\Payload\PayloadBuilder;
  */
 final class Application
 {
-    public const VERSION = '1.2.3';
+    public const VERSION = '1.3.0';
 
     private const DEFAULT_ENTRIES = ['__destruct', '__wakeup', '__unserialize'];
 
@@ -42,7 +42,12 @@ final class Application
         'file_delete' => 'delete-file',
         'file_move' => 'move-file',
         'file_copy' => 'move-file',
-        'file_perms' => 'move-file',
+        'file_perms' => 'chmod-file',
+        'ssrf' => 'ssrf-url',
+        'env' => 'env-value',
+        'var' => 'var-value',
+        'mail' => 'mail-to',
+        'deserialize' => 'serialized',
     ];
 
     /** 没有给选项时，按 sink 分类给一个合适的默认值。 */
@@ -306,7 +311,13 @@ Options:
   --read-file=path     Value for file read / include sinks (default: /etc/passwd)
   --write-file=path    Value for file write sinks (default: /tmp/popchain.txt)
   --delete-file=path   Value for file delete sinks (default: /tmp/popchain.txt)
-  --move-file=path     Value for file move / copy / permission sinks (default: /tmp/popchain.txt)
+  --move-file=path     Value for file move / copy sinks (default: /tmp/popchain.txt)
+  --chmod-file=path    Value for chmod sinks (default: /tmp/popchain.txt)
+  --ssrf-url=url       Value for SSRF sinks such as simplexml_load_file / get_headers (default: http://127.0.0.1/)
+  --env-value=text     Value for putenv sinks (default: POPCHAIN=1)
+  --var-value=text     Value for parse_str sinks (default: popchain=1)
+  --mail-to=address    Value for mail sinks (default: a@b.test)
+  --serialized=data    Value for unserialize sinks (default: a:0:{})
   --output=file        Write payloads to a file (JSON in --json mode)
   --max-depth=8        Maximum chain depth
   --max-chains=50      Maximum number of chains
@@ -320,6 +331,7 @@ Examples:
   cat chal.php | popchain find --stdin --cmd='id'
   popchain find --url=https://example.com/chal.php --cmd='id'
   popchain find ./src --class=Entry --sink=system --cmd='id'
+  popchain find ./src --sink=file_get_contents --read-file=/flag
   popchain find ./src --entry=all --output=payloads.txt
   popchain find ./src --lang=zh
 
@@ -353,7 +365,13 @@ php_pop_framework v{$version} — PHP 反序列化 POP 链自动生成器
   --read-file=路径     文件读取 / 包含类 sink 的写入值（默认 /etc/passwd）
   --write-file=路径    文件写入类 sink 的写入值（默认 /tmp/popchain.txt）
   --delete-file=路径   文件删除类 sink 的写入值（默认 /tmp/popchain.txt）
-  --move-file=路径     文件移动 / 复制 / 权限类 sink 的写入值（默认 /tmp/popchain.txt）
+  --move-file=路径     文件移动 / 复制类 sink 的写入值（默认 /tmp/popchain.txt）
+  --chmod-file=路径    chmod 类 sink 的写入值（默认 /tmp/popchain.txt）
+  --ssrf-url=地址      SSRF 类 sink（simplexml_load_file / get_headers 等）的写入值（默认 http://127.0.0.1/）
+  --env-value=文本     putenv 类 sink 的写入值（默认 POPCHAIN=1）
+  --var-value=文本     parse_str 类 sink 的写入值（默认 popchain=1）
+  --mail-to=地址       mail 类 sink 的写入值（默认 a@b.test）
+  --serialized=数据    unserialize 类 sink 的写入值（默认 a:0:{}）
   --output=文件        把 payload 写入文件（JSON 模式写 JSON）
   --max-depth=8        链最大深度
   --max-chains=50      最多输出多少条链
@@ -367,6 +385,7 @@ php_pop_framework v{$version} — PHP 反序列化 POP 链自动生成器
   cat chal.php | popchain find --stdin --cmd='id'
   popchain find --url=https://example.com/chal.php --cmd='id'
   popchain find ./src --class=Entry --sink=system --cmd='id'
+  popchain find ./src --sink=file_get_contents --read-file=/flag
   popchain find ./src --entry=all --output=payloads.txt
   popchain find ./src --lang=zh
 

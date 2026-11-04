@@ -52,3 +52,63 @@ class IncludeEntry
         include $this->obj;
     }
 }
+
+class ChmodEntry
+{
+    public $obj;
+
+    public function __destruct()
+    {
+        chmod($this->obj, 0644);
+    }
+}
+
+class SsrfEntry
+{
+    public $obj;
+
+    public function __destruct()
+    {
+        get_headers($this->obj);
+    }
+}
+
+class EnvEntry
+{
+    public $obj;
+
+    public function __destruct()
+    {
+        putenv($this->obj);
+    }
+}
+
+class VarEntry
+{
+    public $obj;
+
+    public function __destruct()
+    {
+        parse_str($this->obj);
+    }
+}
+
+class MailEntry
+{
+    public $obj;
+
+    public function __destruct()
+    {
+        mail($this->obj, 'subject', 'body');
+    }
+}
+
+class DeserializeEntry
+{
+    public $obj;
+
+    public function __destruct()
+    {
+        unserialize($this->obj);
+    }
+}

@@ -118,7 +118,13 @@ popchain version
 | `--read-file=path` | Value for file-read and `include` sinks (default `/etc/passwd`) |
 | `--write-file=path` | Value for file-write sinks (default `/tmp/popchain.txt`) |
 | `--delete-file=path` | Value for file-delete sinks (default `/tmp/popchain.txt`) |
-| `--move-file=path` | Value for file move / copy / permission sinks (default `/tmp/popchain.txt`) |
+| `--move-file=path` | Value for file move / copy sinks (default `/tmp/popchain.txt`) |
+| `--chmod-file=path` | Value for `chmod` sinks (default `/tmp/popchain.txt`) |
+| `--ssrf-url=url` | Value for SSRF sinks such as `simplexml_load_file` / `get_headers` (default `http://127.0.0.1/`) |
+| `--env-value=text` | Value for `putenv` sinks (default `POPCHAIN=1`) |
+| `--var-value=text` | Value for `parse_str` sinks (default `popchain=1`) |
+| `--mail-to=address` | Value for `mail` sinks (default `a@b.test`) |
+| `--serialized=data` | Value for `unserialize` sinks (default `a:0:{}`) |
 | `--output=file` | Write payloads to a file; in JSON mode, writes JSON |
 | `--max-depth=8` | Maximum chain depth |
 | `--max-chains=50` | Maximum number of chains to output |

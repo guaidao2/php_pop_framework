@@ -419,6 +419,24 @@ check('--move-file 覆盖移动目标', str_contains($moveFile, '/tmp/move-me.tx
 $includeFile = $fileSinkCli(['--class=IncludeEntry', '--read-file=/tmp/inc.php']);
 check('--read-file 同时覆盖 include 目标', str_contains($includeFile, '/tmp/inc.php'), $includeFile);
 
+$chmodFile = $fileSinkCli(['--class=ChmodEntry', '--chmod-file=/tmp/mode.txt']);
+check('--chmod-file 覆盖权限目标', str_contains($chmodFile, '/tmp/mode.txt'), $chmodFile);
+
+$ssrfUrl = $fileSinkCli(['--class=SsrfEntry', '--ssrf-url=http://169.254.169.254/']);
+check('--ssrf-url 覆盖 SSRF 目标', str_contains($ssrfUrl, 'http://169.254.169.254/'), $ssrfUrl);
+
+$envValue = $fileSinkCli(['--class=EnvEntry', '--env-value=POC=1']);
+check('--env-value 覆盖环境变量值', str_contains($envValue, 'POC=1'), $envValue);
+
+$varValue = $fileSinkCli(['--class=VarEntry', '--var-value=x=1']);
+check('--var-value 覆盖变量注入值', str_contains($varValue, 'x=1'), $varValue);
+
+$mailTo = $fileSinkCli(['--class=MailEntry', '--mail-to=test@example.test']);
+check('--mail-to 覆盖收件人', str_contains($mailTo, 'test@example.test'), $mailTo);
+
+$serialized = $fileSinkCli(['--class=DeserializeEntry', '--serialized=O:8:"stdClass":0:{}']);
+check('--serialized 覆盖反序列化数据', str_contains($serialized, 'stdClass'), $serialized);
+
 ob_start();
 Application::run(['popchain', 'help']);
 $helpText = ob_get_clean();

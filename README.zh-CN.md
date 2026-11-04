@@ -118,7 +118,13 @@ popchain version
 | `--read-file=路径` | 文件读取 / `include` 类 sink 的写入值（默认 `/etc/passwd`） |
 | `--write-file=路径` | 文件写入类 sink 的写入值（默认 `/tmp/popchain.txt`） |
 | `--delete-file=路径` | 文件删除类 sink 的写入值（默认 `/tmp/popchain.txt`） |
-| `--move-file=路径` | 文件移动 / 复制 / 权限类 sink 的写入值（默认 `/tmp/popchain.txt`） |
+| `--move-file=路径` | 文件移动 / 复制类 sink 的写入值（默认 `/tmp/popchain.txt`） |
+| `--chmod-file=路径` | `chmod` 类 sink 的写入值（默认 `/tmp/popchain.txt`） |
+| `--ssrf-url=地址` | SSRF 类 sink（`simplexml_load_file` / `get_headers` 等）的写入值（默认 `http://127.0.0.1/`） |
+| `--env-value=文本` | `putenv` 类 sink 的写入值（默认 `POPCHAIN=1`） |
+| `--var-value=文本` | `parse_str` 类 sink 的写入值（默认 `popchain=1`） |
+| `--mail-to=地址` | `mail` 类 sink 的写入值（默认 `a@b.test`） |
+| `--serialized=数据` | `unserialize` 类 sink 的写入值（默认 `a:0:{}`） |
 | `--output=文件` | 把 payload 写入文件；JSON 模式写 JSON |
 | `--max-depth=8` | 链最大深度 |
 | `--max-chains=50` | 最多输出多少条链 |
