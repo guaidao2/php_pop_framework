@@ -4,7 +4,7 @@
 
 php_pop_framework is a PHP deserialization POP chain generator for CTF and authorized code auditing. The CLI entry point is `popchain`.
 
-It also embeds **SymPHP**, a path-sensitive symbolic-execution / taint analysis engine, exposed as a second detection type for XSS, SQL injection, command injection, LFI, SSRF, XXE and more. Both detectors run by default (`--type=all`); use `--type=deserialization` or `--type=symbolic` to narrow.
+It also embeds **SymPHP**, a path-sensitive symbolic-execution / taint analysis engine, exposed as a second detection type for XSS, SQL injection, command injection, LFI, SSRF, XXE and more. Both detectors run by default (`--type=all`); use `--type=deserialization` or `--type=symbolic` to narrow. A heuristic `--type=dom-xss` detector scans JS/inline templates for dynamic `innerHTML` / `document.write` sinks (potential DOM/stored XSS) and is opt-in because it trades precision for coverage.
 
 Give it a PHP source tree (a single file, a directory, stdin, or a URL) and the tool will:
 
@@ -188,7 +188,8 @@ popchain version
 | `--no-color` | Disable colors; the `NO_COLOR` environment variable also works |
 | `--obfuscate` | Write strings as `S:` hex escapes so keyword filters do not see them |
 | `--encode=url\|base64` | Encode the payload for direct copy/paste: `url` for a `?data=` query, `base64` for log-safe text; `--output` writes the encoded form too |
-| `--type=all\|deserialization\|symbolic` | Detection types to run; `all` (default) runs every detector, pick one to narrow; see `--list-types` |
+| `--type=all\|deserialization\|symbolic\|dom-xss` | Detection types; `all` (default) = deserialization + symbolic, `dom-xss` is opt-in (heuristic); see `--list-types` |
+| `--no-gadget-gate` | Directory `all` scans suppress POP chains when no tainted `unserialize()` input is found; this flag keeps them |
 | `--list-types` | List available detection types and exit |
 | `--engine=none\|external` | Engine override: the built-in in-process solver is used by default, `none` disables it, `external` uses `--engine-cmd` |
 | `--engine-cmd=cmd` | External engine command: JSON request on stdin, JSON response on stdout |
@@ -266,6 +267,9 @@ The payload is assembled straight into PHP's serialization format by `src/Payloa
 
 Static analysis cannot cover every dynamic feature PHP offers. Current limits and heuristics:
 
+- `--type=dom-xss` is a heuristic: it flags dynamic `innerHTML` / `document.write` without full JS data-flow, so treat hits as leads rather than confirmed stored XSS
+- Directory `all` scans suppress POP chains when no tainted `unserialize()` input is found; use `--type=deserialization` or `--no-gadget-gate` to list gadget-only chains
+
 - Reflection, code generated after `eval`, and `include` paths resolved at runtime
 - Exception paths and loop counts are not modelled
 - `preg_replace_callback`: the callback receives a matches array rather than plain elements, so parameters are not mapped
@@ -275,7 +279,9 @@ Static analysis cannot cover every dynamic feature PHP offers. Current limits an
 - Fixed literal sink arguments produce reachability chains only; whether the hardcoded operation is actually harmful depends on the target
 - Method parameter constraints only cover `is_array` / `count` / element comparisons / `intval`-style comparisons
 - Symbolic analysis is bounded by path/state budgets; when a large project hits the limit the CLI prints a truncation warning (raise `--sym-max-paths` / `--sym-max-states` to dig deeper)
-- `realpath()` containment guards are recognised: `$real = realpath($path); $base = realpath('/fixed'); if ($real === false || $base === false || strpos($real . '/', $base . '/') !== 0) exit;` suppresses path-confined file-read findings; weak prefix checks (no separator on the base side, base `/`, variable base, reversed direction, non-terminating guard) still report
+- `realpath()` containment guards are recognised: `$real = realpath($path); $base = realpath('/fixed'); if ($real === false || $base === false || strpos($real . '/', $base . '/') !== 0) exit;` suppresses path-confined file-read findings; weak prefix checks (no separator on the base side, base `/`, variable base, reversed direction, non-terminating guard) still report. `$_SERVER['DOCUMENT_ROOT']` is accepted as a server-controlled base
+- Upload analysis: `move_uploaded_file` whose destination name comes from `$_FILES` is reported as `Unrestricted File Upload` when the code has no extension check (literal list, `.php` suffix comparison or extension regex); an extension blacklist / whitelist or a fixed safe suffix (`.jpg`) suppresses it. Validating only the client-supplied MIME (`$_FILES[...]['type']`) is not enough. `pathinfo(..., PATHINFO_EXTENSION)` and whitelist `preg_replace('/[^...]/', '_', ...)` clear path-traversal taint
+- A declared `Content-Type: application/json` response suppresses XSS findings for output wrapped in `json_encode()`
 - `header()` / `setcookie()` reject CRLF values on modern PHP, so response-header injection is only reported for `mail()`; `realpath()` results are treated as local paths (not SSRF sources), and `str_replace` that removes both path separators clears path-traversal taint
 - Gadgets whose magic methods depend on runtime-created state (open handles, live database connections, loaded extensions) cannot be reproduced by property injection alone
 - Anonymous classes cannot be instantiated by `unserialize`, so they are intentionally skipped rather than modelled

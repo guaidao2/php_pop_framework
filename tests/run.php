@@ -529,7 +529,60 @@ check('条件节点带 true / false 边', in_array('true', $cfgLabels, true) && 
 check('CFG 可序列化成 JSON', json_decode((string) json_encode($earlyCfg->toArray()), true) !== null);
 
 check('检测器注册表包含 deserialization', in_array('deserialization', DetectorRegistry::names(), true));
+check('检测器注册表包含 dom-xss', in_array('dom-xss', DetectorRegistry::names(), true));
 check('未知检测器返回 null', DetectorRegistry::create('does-not-exist') === null);
+
+ob_start();
+$exit = Application::run(['popchain', 'find', __DIR__ . '/fixtures/dom_xss.js', '--type=dom-xss', '--no-color']);
+$domOut = ob_get_clean();
+check('dom-xss 检出 innerHTML 动态拼接', $exit === 0
+    && str_contains($domOut, '(dom-xss/DOM_XSS)')
+    && str_contains($domOut, 'innerHTML'), $domOut);
+
+ob_start();
+$exit = Application::run(['popchain', 'find', __DIR__ . '/fixtures/dom_xss.js', '--type=dom-xss', '--json']);
+$domJson = json_decode(ob_get_clean(), true);
+check('dom-xss JSON 输出', is_array($domJson)
+    && ($domJson['findings'][0]['type'] ?? '') === 'dom-xss'
+    && ($domJson['findings'][0]['category'] ?? '') === 'DOM_XSS', json_encode($domJson));
+
+$gadgetDir = __DIR__ . '/fixtures/gadget_only';
+ob_start();
+Application::run(['popchain', 'find', $gadgetDir, '--no-color']);
+$gadgetGated = ob_get_clean();
+check('目录 all 无污点 unserialize 时抑制 gadget 链', !str_contains($gadgetGated, 'GadgetOnly::__destruct')
+    && str_contains($gadgetGated, 'suppressed'), $gadgetGated);
+
+ob_start();
+Application::run(['popchain', 'find', $gadgetDir, '--type=deserialization', '--no-color']);
+$gadgetDeser = ob_get_clean();
+check('--type=deserialization 保留 gadget 链', str_contains($gadgetDeser, 'GadgetOnly::__destruct'), $gadgetDeser);
+check('--type=deserialization 不附加 gadget 备注', !str_contains($gadgetDeser, 'verify this gadget chain'), $gadgetDeser);
+
+ob_start();
+Application::run(['popchain', 'find', $gadgetDir, '--sym-entry=' . $gadgetDir . '/Chain.php', '--no-color']);
+$gadgetEntry = ob_get_clean();
+check('没有 unserialize 候选时仍收口 gadget 链', str_contains($gadgetEntry, 'suppressed')
+    && !str_contains($gadgetEntry, 'GadgetOnly::__destruct'), $gadgetEntry);
+
+ob_start();
+Application::run(['popchain', 'find', $gadgetDir, '--no-gadget-gate', '--no-color']);
+$gadgetNoGate = ob_get_clean();
+check('--no-gadget-gate 关闭收口', str_contains($gadgetNoGate, 'GadgetOnly::__destruct'), $gadgetNoGate);
+
+$gadgetInputDir = __DIR__ . '/fixtures/gadget_only_input';
+ob_start();
+Application::run(['popchain', 'find', $gadgetInputDir, '--no-color']);
+$gadgetInput = ob_get_clean();
+check('php://input 赋值视为 unserialize 候选', str_contains($gadgetInput, 'GadgetOnlyInput::__destruct')
+    && str_contains($gadgetInput, 'verify this gadget chain'), $gadgetInput);
+
+$gadgetCommentDir = __DIR__ . '/fixtures/gadget_only_commented';
+ob_start();
+Application::run(['popchain', 'find', $gadgetCommentDir, '--no-color']);
+$gadgetComment = ob_get_clean();
+check('注释里的 unserialize 不算候选', !str_contains($gadgetComment, 'GadgetOnlyCommented::__destruct')
+    && str_contains($gadgetComment, 'suppressed'), $gadgetComment);
 
 ob_start();
 $exit = Application::run(['popchain', '--list-types']);
@@ -618,6 +671,12 @@ Application::run(['popchain', 'find', __DIR__ . '/../examples/symbolic/vuln', '-
 $truncatedJson = json_decode(ob_get_clean(), true);
 check('预算截断写入 JSON warnings', is_array($truncatedJson)
     && ($truncatedJson['warnings'] ?? []) !== [], json_encode($truncatedJson));
+
+ob_start();
+Application::run(['popchain', 'find', __DIR__ . '/../examples/demo.php', '--max-chains=1']);
+$maxChainsOut = ob_get_clean();
+check('max-chains 真截断时告警', str_contains($maxChainsOut, '[warn]')
+    && str_contains($maxChainsOut, 'max-chains'), $maxChainsOut);
 
 ob_start();
 $exit = Application::run(['popchain', 'find', __DIR__ . '/fixtures/object_injection_only.php']);

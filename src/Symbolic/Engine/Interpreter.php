@@ -11,6 +11,7 @@ use PopChain\Symbolic\Expr\BinaryExpr;
 use PopChain\Symbolic\Expr\CallExpr;
 use PopChain\Symbolic\Expr\Expr;
 use PopChain\Symbolic\Expr\Simplifier;
+use PopChain\Symbolic\Expr\TernaryExpr;
 use PopChain\Symbolic\Expr\UnaryExpr;
 use PopChain\Symbolic\Expr\VarExpr;
 use PopChain\Symbolic\Security\Finding;
@@ -308,6 +309,10 @@ final class Interpreter
 
         if ($stmt instanceof PStmt\Block) {
             return $this->executeStmts($stmt->stmts, $state);
+        }
+
+        if ($stmt instanceof PStmt\InlineHTML && trim($stmt->value) !== '') {
+            $state->hasOutput = true;
         }
 
         // 声明、Nop、InlineHTML、Goto/Label 等不需要执行
@@ -1375,6 +1380,14 @@ final class Interpreter
     {
         $lower = strtolower(ltrim($name, '\\'));
 
+        if ($lower === 'header' && isset($args[0]) && !$state->hasOutput) {
+            $header = $args[0]->toExpr();
+            if ($header->isConstant() && is_string($header->constantValue())
+                && preg_match('/^\s*content-type\s*:/i', $header->constantValue()) === 1) {
+                $state->jsonResponse = stripos($header->constantValue(), 'application/json') !== false;
+            }
+        }
+
         // Sink 检测
         $sink = SinkCatalog::lookupFunction($lower);
         if ($sink !== null) {
@@ -1645,6 +1658,8 @@ final class Interpreter
         $state->namespace = $caller->namespace;
         $state->uses = $caller->uses;
         $state->includedFiles = $caller->includedFiles;
+        $state->jsonResponse = $caller->jsonResponse;
+        $state->hasOutput = $caller->hasOutput;
 
         if ($closure->node instanceof PExpr\ArrowFunction) {
             return $this->evalExpr($closure->node->expr, $state);
@@ -1668,7 +1683,10 @@ final class Interpreter
             $caller->terminate(new ExitSignal());
         }
 
-        $this->lastThisValue = $state->env['$this'] ?? null;
+        $closureThis = $state->env['$this'] ?? null;
+        $this->lastThisValue = $closureThis instanceof ObjectValue ? $closureThis : null;
+        $caller->jsonResponse = $state->jsonResponse;
+        $caller->hasOutput = $caller->hasOutput || $state->hasOutput;
         $this->syncGlobalsToCaller($caller);
 
         return $returnValues !== [] ? ValueFactory::merge($returnValues) : ValueFactory::fromConstant(null);
@@ -2487,6 +2505,8 @@ final class Interpreter
         $callState->currentStaticClass = $calledClass ?? $thisValue?->class ?? $def->class?->name;
         $callState->uses = $this->program->fileUses($def->file);
         $callState->includedFiles = $caller->includedFiles;
+        $callState->jsonResponse = $caller->jsonResponse;
+        $callState->hasOutput = $caller->hasOutput;
 
         $results = $this->executeStmts($def->stmts, $callState);
 
@@ -2508,7 +2528,10 @@ final class Interpreter
             $caller->terminate(new ExitSignal());
         }
 
-        $this->lastThisValue = $callState->env['$this'] ?? null;
+        $calledThis = $callState->env['$this'] ?? null;
+        $this->lastThisValue = $calledThis instanceof ObjectValue ? $calledThis : null;
+        $caller->jsonResponse = $callState->jsonResponse;
+        $caller->hasOutput = $caller->hasOutput || $callState->hasOutput;
         $this->syncGlobalsToCaller($caller);
 
         return $returnValues !== [] ? ValueFactory::merge($returnValues) : ValueFactory::fromConstant(null);
@@ -2569,6 +2592,11 @@ final class Interpreter
             return;
         }
 
+        $outputSink = in_array(strtolower($name), ['echo', 'print', 'printf', 'print_r', 'var_dump'], true);
+        if ($outputSink) {
+            $state->hasOutput = true;
+        }
+
         $candidates = $values;
         if ($sink->argIndexes !== []) {
             $candidates = [];
@@ -2580,6 +2608,15 @@ final class Interpreter
             if ($candidates === []) {
                 $candidates = $values;
             }
+        }
+
+        // Content-Type 已经是 JSON 且输出值都经过 json_encode 时，不是 HTML 上下文
+        if ($sink->category === 'XSS' && $state->jsonResponse && $outputSink && $this->allJsonEncoded($candidates)) {
+            return;
+        }
+
+        if (strtolower($name) === 'move_uploaded_file' && $sink->category === 'PATH_TRAVERSAL') {
+            $this->reportUnrestrictedUpload($name, $values, $state, $node);
         }
 
         $sources = [];
@@ -2793,9 +2830,22 @@ final class Interpreter
             return false;
         }
         $base = $left->args[0];
+        $baseText = $base->toString();
         if ($base->variables() !== []) {
-            // attacker 可控的 base 不能自证清白
-            return false;
+            // DOCUMENT_ROOT 是服务端配置，不是攻击者可控输入；其他变量一律拒绝
+            if (!str_contains($baseText, "\$_SERVER['DOCUMENT_ROOT']")
+                && !str_contains($baseText, "\$_SERVER[\"DOCUMENT_ROOT\"]")) {
+                return false;
+            }
+            foreach ($base->variables() as $variable) {
+                if (!in_array($variable, [
+                    '$_SERVER',
+                    "\$_SERVER['DOCUMENT_ROOT']",
+                    '$_SERVER["DOCUMENT_ROOT"]',
+                ], true)) {
+                    return false;
+                }
+            }
         }
         if ($base->isConstant()) {
             $value = $base->constantValue();
@@ -2810,6 +2860,113 @@ final class Interpreter
     private function isSlashConstant(Expr $expr): bool
     {
         return $expr->isConstant() && $expr->constantValue() === '/';
+    }
+
+    /** 目标表达式是否以固定的安全扩展名结尾（拼接最右操作数 / 三元所有分支）。 */
+    private function endsWithSafeExtension(Expr $expr): bool
+    {
+        if ($expr instanceof TernaryExpr) {
+            return $this->endsWithSafeExtension($expr->ifTrue)
+                && $this->endsWithSafeExtension($expr->ifFalse);
+        }
+        if (!$expr instanceof BinaryExpr || $expr->op !== '.') {
+            return false;
+        }
+        $right = $expr->right;
+        if (!$right->isConstant() || !is_string($right->constantValue())) {
+            return false;
+        }
+
+        return preg_match('/^\.(jpg|jpeg|png|gif|bmp|webp|pdf|doc|docx|xls|xlsx|ppt|pptx|txt|zip|rar)$/i', trim($right->constantValue())) === 1;
+    }
+
+    /**
+     * 上传接口只校验客户端可控的 $_FILES['type']（MIME）而没有扩展名校验时，
+     * move_uploaded_file 的目标文件名仍来自攻击者，属于任意文件上传。
+     *
+     * @param list<Value> $values
+     */
+    private function reportUnrestrictedUpload(string $name, array $values, State $state, Node $node): void
+    {
+        $destination = $values[1] ?? null;
+        if ($destination === null) {
+            return;
+        }
+
+        $sources = [];
+        foreach ($destination->taint->describe() as $description) {
+            if (str_contains($description, '$_FILES')) {
+                $sources[] = $description;
+            }
+        }
+        if ($sources === []) {
+            return;
+        }
+
+        $path = [];
+        foreach ($state->constraints as $constraint) {
+            $path[] = $constraint->toString();
+        }
+        $uploadText = implode(' ', array_filter(
+            $path,
+            static fn (string $constraint): bool => str_contains($constraint, '$_FILES')
+                || str_contains($constraint, 'pathinfo('),
+        ));
+
+        $dangerous = ['php', 'phtml', 'php3', 'php4', 'php5', 'phar', 'jsp', 'aspx', 'exe', 'bat', 'cmd', 'sh', 'cgi'];
+        // 目标名以固定的安全扩展名结尾（如 basename($name) . '.jpg'）时扩展名不可控
+        if ($this->endsWithSafeExtension($destination->toExpr())) {
+            return;
+        }
+
+        // 有扩展名黑名单（字面量列表、'.php' 后缀判断或 '/\.(php|phtml)$/' 分组正则）时说明检查过扩展名
+        foreach ($dangerous as $extension) {
+            if (str_contains($uploadText, "'" . $extension . "'")
+                || str_contains($uploadText, '"' . $extension . '"')
+                || str_contains($uploadText, '\\.' . $extension)
+                || str_contains($uploadText, "." . $extension . "'")) {
+                return;
+            }
+        }
+        if (preg_match('/\\\\.\\(?\\??:?(' . implode('|', $dangerous) . ')\\b/i', $uploadText) === 1) {
+            return;
+        }
+
+        // 有扩展名白名单（精确的 'jpg' / "png" 字面量）时同样不按“只信客户端 MIME”报告
+        foreach (['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'zip', 'rar'] as $extension) {
+            if (str_contains($uploadText, "'" . $extension . "'")
+                || str_contains($uploadText, '"' . $extension . '"')) {
+                return;
+            }
+        }
+
+        $this->findings->add(new Finding(
+            'FILE_UPLOAD',
+            'critical',
+            'Unrestricted File Upload',
+            $state->file,
+            $node->getStartLine(),
+            $name . '()',
+            array_values(array_unique($sources)),
+            $path,
+            'shell.php',
+            $this->snippet($state->file, $node->getStartLine()),
+        ));
+    }
+
+    /** 输出值是否全部来自 json_encode()。 */
+    private function allJsonEncoded(array $values): bool
+    {
+        if ($values === []) {
+            return false;
+        }
+        foreach ($values as $value) {
+            if (!str_contains($value->toExpr()->toString(), 'json_encode(')) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private function sinkDisplayName(string $name, Sink $sink): string

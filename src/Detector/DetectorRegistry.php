@@ -16,6 +16,7 @@ final class DetectorRegistry
     private const DETECTORS = [
         'deserialization' => DeserializationDetector::class,
         'symbolic' => SymbolicDetector::class,
+        'dom-xss' => DomXssDetector::class,
     ];
 
     /** @return list<string> */
@@ -41,6 +42,10 @@ final class DetectorRegistry
     {
         $detectors = [];
         foreach (self::names() as $name) {
+            // DOM XSS 是启发式扫描，误报相对多，默认不混进 all；显式 --type=dom-xss 使用
+            if ($name === 'dom-xss') {
+                continue;
+            }
             $detector = self::create($name, $engine);
             if ($detector !== null) {
                 $detectors[] = $detector;

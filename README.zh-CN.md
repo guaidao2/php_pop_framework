@@ -4,7 +4,7 @@ English: [README.md](README.md)
 
 php_pop_framework 是一个 PHP 反序列化 POP 链自动生成器，面向 CTF / 授权代码审计。命令行入口是 `popchain`。
 
-仓库内同时合并了 **SymPHP** 符号执行 / 污点分析引擎，作为第二种检测类型，覆盖 XSS、SQL 注入、命令注入、文件包含、SSRF、XXE 等。两个检测器默认一起跑（`--type=all`）；只想跑一种就用 `--type=deserialization` 或 `--type=symbolic`。
+仓库内同时合并了 **SymPHP** 符号执行 / 污点分析引擎，作为第二种检测类型，覆盖 XSS、SQL 注入、命令注入、文件包含、SSRF、XXE 等。两个检测器默认一起跑（`--type=all`）；只想跑一种就用 `--type=deserialization` 或 `--type=symbolic`。另有启发式 `--type=dom-xss`：扫描 JS/内联模板里的动态 `innerHTML` / `document.write` sink（DOM/存储型 XSS 候选），因为精度换覆盖面，需要显式启用。
 
 输入一份 PHP 源码（单个文件、目录、stdin 或 URL），工具会：
 
@@ -181,7 +181,8 @@ popchain version
 | `--no-color` | 关闭彩色；`NO_COLOR` 环境变量同样生效 |
 | `--obfuscate` | 字符串改用 `S:` 十六进制转义，关键字不会被过滤器看到 |
 | `--encode=url\|base64` | payload 直接编码，方便复制粘贴：`url` 用于 `?data=`，`base64` 便于文本传输；`--output` 也写编码后的形式 |
-| `--type=all\|deserialization\|symbolic` | 检测类型：`all`（默认，运行所有检测器），也可只跑某一个；见 `--list-types` |
+| `--type=all\|deserialization\|symbolic\|dom-xss` | 检测类型：`all`（默认 = deserialization + symbolic），`dom-xss` 是启发式、需显式启用；见 `--list-types` |
+| `--no-gadget-gate` | 目录 all 扫描在找不到受污点控制的 `unserialize()` 入口时会抑制 POP 链，此开关保留链 |
 | `--list-types` | 列出可用检测类型后退出 |
 | `--engine=none\|external` | 引擎覆盖：内置进程内求解器默认启用，`none` 关闭，`external` 配合 `--engine-cmd` 使用 |
 | `--engine-cmd=命令` | 外部引擎命令：stdin 收 JSON 请求，stdout 回 JSON 响应 |
@@ -259,6 +260,9 @@ payload 由 `src/Payload/Serializer.php` 直接按 PHP 序列化格式拼接，*
 
 静态分析不可能覆盖 PHP 的全部动态特性。当前限制与启发式边界：
 
+- `--type=dom-xss` 是启发式：不做完整 JS 数据流，只标动态 `innerHTML` / `document.write`，命中当线索而不是已确认的存储型 XSS
+- 目录 all 扫描在找不到受污点控制的 `unserialize()` 入口时会抑制 POP 链；要看纯 gadget 链用 `--type=deserialization` 或 `--no-gadget-gate`
+
 - 反射、`eval` 后生成的动态代码、运行时才确定的 `include` 路径
 - 异常路径与循环次数不建模
 - `preg_replace_callback`：回调拿到的是匹配数组而不是普通元素，不建立形参映射
@@ -268,7 +272,9 @@ payload 由 `src/Payload/Serializer.php` 直接按 PHP 序列化格式拼接，*
 - 常量 sink 实参只给出可达性链，硬编码操作是否真正有害取决于目标环境
 - 方法形参约束只覆盖 `is_array` / `count` / 元素比较 / `intval` 比较
 - 符号执行受路径/状态预算限制；大项目触顶时 CLI 会打印截断告警（加大 `--sym-max-paths` / `--sym-max-states` 可继续深入）
-- 识别 `realpath()` 包含性守卫：`$real = realpath($path); $base = realpath('/固定目录'); if ($real === false || $base === false || strpos($real . '/', $base . '/') !== 0) exit;` 会抑制被限制在目录内的文件读取；弱前缀（根目录侧没补分隔符、base 为 `/`、base 是变量、方向写反、守卫不终止）仍会报告
+- 识别 `realpath()` 包含性守卫：`$real = realpath($path); $base = realpath('/固定目录'); if ($real === false || $base === false || strpos($real . '/', $base . '/') !== 0) exit;` 会抑制被限制在目录内的文件读取；弱前缀（根目录侧没补分隔符、base 为 `/`、base 是变量、方向写反、守卫不终止）仍会报告；`$_SERVER['DOCUMENT_ROOT']` 可作为服务端可控的 base
+- 上传分析：`move_uploaded_file` 的目标名来自 `$_FILES`、而代码没有扩展名校验（字面量列表、`.php` 后缀比较或扩展名正则）时，报 `Unrestricted File Upload`；有扩展名黑/白名单或固定安全后缀（`.jpg`）则不报。只校验客户端可控的 MIME（`$_FILES[...]['type']`）不算扩展名校验。`pathinfo(..., PATHINFO_EXTENSION)` 和白名单 `preg_replace('/[^...]/', '_', ...)` 会清除路径穿越污点
+- 代码通过 `header()` 声明 `Content-Type: application/json` 时，经 `json_encode()` 包装的输出不再按 XSS 报告
 - 现代 PHP 的 `header()` / `setcookie()` 会拒绝含 CRLF 的值，响应头注入只对 `mail()` 报告；`realpath()` 的结果按本地路径处理，不再当作 SSRF 源；`str_replace` 同时删除两种路径分隔符后才清除路径穿越污点
 - 魔术方法依赖运行时状态（已打开的资源句柄、活动的数据库连接、已加载扩展）的 gadget，仅靠属性注入无法复现
 - 匿名类无法被 `unserialize` 实例化，因此有意跳过而不是建模

@@ -64,6 +64,12 @@ final class State
 
     public bool $isGlobalScope = false;
 
+    /** 当前响应已声明为 JSON，echo 不再按 HTML 上下文报 XSS。 */
+    public bool $jsonResponse = false;
+
+    /** 当前路径是否已经产生输出（header() 在输出后会失败）。 */
+    public bool $hasOutput = false;
+
     /**
      * @param array<string, Value> $env
      * @param list<Expr> $constraints

@@ -17,7 +17,7 @@ use PopChain\Payload\PayloadBuilder;
  */
 final class Application
 {
-    public const VERSION = '2.8.3';
+    public const VERSION = '2.8.4';
 
     private const DEFAULT_ENTRIES = ['__destruct', '__wakeup', '__unserialize'];
 
@@ -28,7 +28,7 @@ final class Application
     ];
 
     /** 不带值的布尔选项。 */
-    private const BOOLEAN_OPTIONS = ['json', 'stdin', 'include-vendor', 'obfuscate', 'list-types', 'sym-no-includes', 'color', 'no-color', 'help', 'version'];
+    private const BOOLEAN_OPTIONS = ['json', 'stdin', 'include-vendor', 'obfuscate', 'list-types', 'sym-no-includes', 'no-gadget-gate', 'color', 'no-color', 'help', 'version'];
 
     /** 必须是正整数的选项。 */
     private const NUMERIC_OPTIONS = ['max-depth', 'max-chains'];
@@ -90,7 +90,7 @@ final class Application
             'html_source_extracted' => '[i] URL looks like highlighted PHP source; extracted the source code from the HTML',
             'bad_encode' => '--encode only accepts url or base64, got: {value}',
             'available_types' => 'Available detection types:',
-            'all_types' => '(default) run every detector',
+            'all_types' => '(default) run deserialization + symbolic (dom-xss is opt-in)',
             'no_findings' => 'No findings.',
             'no_pop_chain' => 'no POP chain in the scanned code (check autoloaded or loaded classes)',
             'unknown_type' => 'Unknown detection type: {type}. Available: {types}',
@@ -102,6 +102,8 @@ final class Application
             'output_failed' => 'Cannot write output file: {file}',
             'external_entry' => 'note: this entry needs an external trigger; unserializing the payload alone will not call it',
             'incomplete_payload' => 'note: the sink value could not be placed in the payload; adjust the chain by hand',
+            'gadgets_suppressed' => 'note: {count} POP chain(s) suppressed because no tainted unserialize() input was found; use --type=deserialization to list gadget chains',
+            'gadget_unverified' => 'note: found an unserialize() candidate, but symbolic analysis could not confirm it; verify this gadget chain before treating it as exploitable',
             'wakeup_bypass' => 'note: this property is reset by __wakeup; the payload is deliberately malformed (declared property count > actual) so unserialize fails and __wakeup is skipped while destructors still run (CVE-2016-7124/SplDoublyLinkedList-style bypass)',
             'arg' => 'arg',
             'via' => 'via',
@@ -125,7 +127,7 @@ final class Application
             'html_source_extracted' => '[i] URL 看起来是高亮后的 PHP 源码页，已从 HTML 里提取出源代码',
             'bad_encode' => '--encode 只接受 url 或 base64，当前值: {value}',
             'available_types' => '可用的检测类型:',
-            'all_types' => '（默认）运行所有检测器',
+            'all_types' => '（默认）运行 deserialization + symbolic（dom-xss 需显式启用）',
             'no_findings' => '没有发现。',
             'no_pop_chain' => '扫描范围内没有可用 POP 链（注意 autoload 或运行时加载的类）',
             'unknown_type' => '未知检测类型: {type}，可用: {types}',
@@ -137,6 +139,8 @@ final class Application
             'output_failed' => '无法写入输出文件: {file}',
             'external_entry' => '注意：该入口需要外部触发，单独反序列化 payload 不会调用它',
             'incomplete_payload' => '注意：sink 的值没能写进 payload，需要手工调整这条链',
+            'gadgets_suppressed' => '注意：未发现受污点控制的 unserialize() 入口，已抑制 {count} 条 POP 链；可用 --type=deserialization 查看 gadget 链',
+            'gadget_unverified' => '注意：找到了 unserialize() 候选入口，但符号执行未能确认；确认这条 gadget 链可利用前先核对入口',
             'wakeup_bypass' => '注意：这个属性会被 __wakeup 重置；payload 故意写成不合法（声明属性数大于实际），让 unserialize 失败、__wakeup 跳过而析构照跑（CVE-2016-7124）',
             'arg' => '参数',
             'via' => 'via',
@@ -398,7 +402,8 @@ Options:
   --json               JSON output
   --color              Force ANSI colors even when stdout is not a TTY
   --no-color           Disable colors (NO_COLOR also works)
-  --type=all|deserialization|symbolic  Detection types to run (default: all, see --list-types)
+  --type=all|deserialization|symbolic|dom-xss  Detection types to run (default: all = deserialization + symbolic; dom-xss is opt-in)
+  --no-gadget-gate     Keep POP chains even when no tainted unserialize() input is found (directory scans)
   --list-types         List available detection types and exit
   --obfuscate          Emit strings as S: hex escapes, hiding keywords from regex filters
   --encode=url|base64  Encode the payload for copy/paste: url for ?data=, base64 for log-safe text
@@ -468,7 +473,8 @@ php_pop_framework v{$version} — PHP 反序列化 POP 链自动生成器
   --json               以 JSON 输出
   --color              强制 ANSI 彩色输出（即使不是终端）
   --no-color           关闭彩色（NO_COLOR 环境变量同样生效）
-  --type=all|deserialization|symbolic  要运行的检测类型（默认 all，见 --list-types）
+  --type=all|deserialization|symbolic|dom-xss  要运行的检测类型（默认 all = deserialization + symbolic；dom-xss 需显式启用）
+  --no-gadget-gate      目录扫描时即使没有受污点控制的 unserialize() 入口也保留 POP 链
   --list-types         列出可用检测类型后退出
   --obfuscate          字符串改用 S: 十六进制转义，绕过关键字过滤
   --encode=url|base64  payload 直接编码成可直接粘贴的形式：url 用于 ?data=，base64 便于文本传输
@@ -677,6 +683,7 @@ TXT;
             'sym_max_loop' => (int) self::option($options, 'sym-max-loop', 3),
             'sym_entry' => self::option($options, 'sym-entry', null),
             'sym_follow_includes' => !isset($options['sym-no-includes']),
+            'include_vendor' => (bool) self::option($options, 'include-vendor', false),
         ];
 
         $findings = [];
@@ -694,18 +701,31 @@ TXT;
 
         $classFilter = self::option($options, 'class');
         $sinkFilter = self::option($options, 'sink');
+        // 目录级 all 扫描：代码里根本没有（或明显不是外部输入进入的）unserialize() 时，
+        // POP 链只是 gadget，不报；有候选入口但符号执行没确认时保留链并加备注。
+        $gatePossible = $type === 'all'
+            && is_dir($path)
+            && !(bool) self::option($options, 'no-gadget-gate', false);
+        $hasUnserializeCandidate = $gatePossible
+            && self::hasUnserializeCandidate($path, (bool) self::option($options, 'include-vendor', false));
+        $gateGadgets = $gatePossible && !$hasUnserializeCandidate;
         $builder = new PayloadBuilder($classes, (bool) self::option($options, 'obfuscate', false));
         $encode = strtolower((string) self::option($options, 'encode', ''));
         $legacyValue = self::option($options, 'cmd', null);
 
         $hasPopChains = false;
+        $hasTaintedUnserialize = false;
         foreach ($findings as $finding) {
             if ($finding->chain !== null && $finding->feasible) {
                 $hasPopChains = true;
             }
+            if ($finding->type === 'symbolic' && strtoupper($finding->category) === 'OBJECT_INJECTION') {
+                $hasTaintedUnserialize = true;
+            }
         }
 
         $records = [];
+        $suppressedChains = 0;
         foreach ($findings as $finding) {
             if (!$finding->feasible) {
                 fwrite(STDERR, '[!] ' . self::t('engine_infeasible', ['entry' => $finding->title]) . "\n");
@@ -713,6 +733,10 @@ TXT;
             }
 
             $chain = $finding->chain;
+            if ($gateGadgets && $chain !== null && !$hasTaintedUnserialize) {
+                $suppressedChains++;
+                continue;
+            }
             if ($chain !== null) {
                 if (!self::chainMatchesFilters($chain, $classFilter, $sinkFilter)) {
                     continue;
@@ -721,6 +745,9 @@ TXT;
                 $category = $chain->sink?->category;
                 $payloadString = $builder->build($chain, self::valueFor($category, $options, $legacyValue));
                 $notes = $finding->notes;
+                if (!$hasTaintedUnserialize && $gatePossible) {
+                    $notes[] = self::t('gadget_unverified');
+                }
                 if (!in_array(strtolower($chain->entryMethod->name), self::DESERIALIZE_ENTRIES, true)) {
                     $notes[] = self::t('external_entry');
                 }
@@ -780,7 +807,7 @@ TXT;
             }
 
             $records[] = [
-                'type' => 'symbolic',
+                'type' => $finding->type,
                 'severity' => $finding->severity,
                 'category' => $finding->category,
                 'title' => $finding->title,
@@ -796,6 +823,10 @@ TXT;
                 'notes' => $symbolicNotes,
                 'snippet' => $finding->snippet,
             ];
+        }
+
+        if ($suppressedChains > 0) {
+            $warnings[] = self::t('gadgets_suppressed', ['count' => $suppressedChains]);
         }
 
         $jsonDocument = [
@@ -828,7 +859,7 @@ TXT;
 
         $color = self::useColor($options);
         echo self::paint(self::t('scanning', ['path' => $label]), '1;36', $color), "\n";
-        if ($type !== 'symbolic') {
+        if (!in_array($type, ['symbolic', 'dom-xss'], true)) {
             echo self::paint(self::t('classes', ['count' => count($classes)]), '90', $color), "
 ";
             echo self::paint(self::t('entries'), '90', $color), self::paint(implode(', ', self::entries($options)), '36', $color), "
@@ -840,7 +871,7 @@ TXT;
             foreach ($warnings as $warning) {
                 echo '[warn] ', $warning, "\n";
             }
-            if ($type !== 'symbolic') {
+            if (!in_array($type, ['symbolic', 'dom-xss'], true)) {
                 echo self::t('no_chains'), "\n";
                 echo self::t('try_entries'), "\n";
                 echo self::t('try_depth'), "\n";
@@ -1025,6 +1056,107 @@ TXT;
     private static function displayable(string $payload): string
     {
         return str_replace("\0", '\0', $payload);
+    }
+
+    /** 目录里是否存在明显由外部输入进入的 unserialize() 候选。 */
+    private static function hasUnserializeCandidate(string $path, bool $includeVendor): bool
+    {
+        $sourceBody = '\\$_(?:GET|POST|COOKIE|REQUEST|FILES|SERVER)\\b'
+            . '|php:\\/\\/input'
+            . '|getallheaders\\s*\\('
+            . '|file_get_contents\\s*\\(\\s*[\'"]php:\\/\\/input'
+            . '|->(?:input|get|cookie|param|post|query|header)\\s*\\(';
+        $sourceRe = '/' . $sourceBody . '/i';
+
+        try {
+            $directory = new \RecursiveDirectoryIterator($path, \RecursiveDirectoryIterator::SKIP_DOTS);
+            $filter = new \RecursiveCallbackFilterIterator(
+                $directory,
+                static fn (\SplFileInfo $current): bool => !in_array(
+                    $current->getFilename(),
+                    ['.git', '.idea', '.svn'],
+                    true,
+                ),
+            );
+            $iterator = new \RecursiveIteratorIterator($filter);
+
+            /** @var \SplFileInfo $file */
+            foreach ($iterator as $file) {
+                if (!$file->isFile() || strtolower($file->getExtension()) !== 'php') {
+                    continue;
+                }
+                $relative = str_replace('\\', '/', $file->getPathname());
+                if (!$includeVendor && (str_contains($relative, '/vendor/') || str_contains($relative, '/node_modules/'))) {
+                    continue;
+                }
+                $content = @file_get_contents($file->getPathname());
+                if (!is_string($content) || !str_contains($content, 'unserialize')) {
+                    continue;
+                }
+                $tokens = token_get_all($content);
+                $count = count($tokens);
+                for ($index = 0; $index < $count; $index++) {
+                    $token = $tokens[$index];
+                    if (!is_array($token)
+                        || !in_array($token[0], [T_STRING, T_NAME_FULLY_QUALIFIED], true)
+                        || strtolower(ltrim($token[1], '\\')) !== 'unserialize') {
+                        continue;
+                    }
+                    $open = $index + 1;
+                    while ($open < $count && is_array($tokens[$open])
+                        && in_array($tokens[$open][0], [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT], true)) {
+                        $open++;
+                    }
+                    if (($tokens[$open] ?? null) !== '(') {
+                        continue;
+                    }
+                    $depth = 0;
+                    $argument = '';
+                    for ($cursor = $open; $cursor < $count; $cursor++) {
+                        $current = $tokens[$cursor];
+                        if ($current === '(') {
+                            $depth++;
+                            if ($depth === 1) {
+                                continue;
+                            }
+                        } elseif ($current === ')') {
+                            $depth--;
+                            if ($depth === 0) {
+                                break;
+                            }
+                        }
+                        if (is_array($current)) {
+                            if (in_array($current[0], [T_COMMENT, T_DOC_COMMENT], true)) {
+                                continue;
+                            }
+                            $argument .= $current[1];
+                        } else {
+                            $argument .= $current;
+                        }
+                    }
+                    if (preg_match($sourceRe, $argument) === 1) {
+                        return true;
+                    }
+                    if (preg_match_all('/\$([A-Za-z_][A-Za-z0-9_]*)/', $argument, $variables) < 1) {
+                        continue;
+                    }
+                    foreach (array_unique($variables[1]) as $variable) {
+                        if (preg_match('/\$' . preg_quote($variable, '/') . '\s*=\s*[^;]{0,300}(?:' . $sourceBody . ')/i', $content) === 1) {
+                            return true;
+                        }
+                    }
+                    // 实参无法判定为纯本地常量时，保守地视为“未确认候选”，避免误抑制
+                    if (preg_match('/\$|[A-Za-z_][A-Za-z0-9_]*\s*\(/', $argument) === 1) {
+                        return true;
+                    }
+                }
+            }
+        } catch (\UnexpectedValueException) {
+            // 读不了的目录按“有候选”处理，宁可保留链也不误抑制
+            return true;
+        }
+
+        return false;
     }
 
     private static function shortName(string $fqcn): string

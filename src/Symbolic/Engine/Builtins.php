@@ -146,8 +146,21 @@ final class Builtins
                 return new ArrayValue([], true, $lower . '()', 'HEADER');
 
             case 'parse_url':
-            case 'pathinfo':
                 return $this->arrayResult($name, $args, $this->taintOf($args));
+
+            case 'pathinfo':
+                return $this->pathinfoResult($name, $args);
+
+            case 'preg_replace':
+                $taint = $this->taintOf($args);
+                if ($this->pregReplaceRemovesPathSeparators($args)) {
+                    $taint = $taint->sanitizeFor(['PATH_TRAVERSAL']);
+                }
+
+                return new ScalarValue(
+                    Expr::call($name, $this->exprArgs($args), Type::String),
+                    $taint,
+                );
 
             case 'json_decode':
             case 'unserialize':
@@ -430,6 +443,68 @@ final class Builtins
 
         // 同时删除两种路径分隔符，才能跨平台切断路径穿越
         return $hasSlash && $hasBackslash;
+    }
+
+    /**
+     * pathinfo：basename/filename/extension 不含路径分隔符，可清 PATH_TRAVERSAL；
+     * dirname 保留路径信息，不清。
+     *
+     * @param list<Value> $args
+     */
+    private function pathinfoResult(string $name, array $args): Value
+    {
+        $taint = $this->taintOf($args);
+        $option = $args[1] ?? null;
+        if ($option !== null && $option->toExpr()->isConstant()) {
+            $flag = $option->toExpr()->constantValue();
+            if (in_array($flag, [PATHINFO_EXTENSION, PATHINFO_BASENAME, PATHINFO_FILENAME], true)) {
+                $taint = $taint->sanitizeFor(['PATH_TRAVERSAL']);
+            }
+
+            return new ScalarValue(Expr::call($name, $this->exprArgs($args), Type::String), $taint);
+        }
+
+        $sanitized = $taint->sanitizeFor(['PATH_TRAVERSAL']);
+        $items = [];
+        foreach (['basename', 'filename', 'extension'] as $key) {
+            $items[$key] = new ScalarValue(
+                new VarExpr(ValueFactory::freshName('pathinfo-' . $key), Type::Mixed),
+                $sanitized,
+            );
+        }
+        // dirname 仍可能包含路径分隔符，保留原污点
+        $items['dirname'] = new ScalarValue(
+            new VarExpr(ValueFactory::freshName('pathinfo-dirname'), Type::Mixed),
+            $taint,
+        );
+        $element = new ScalarValue(
+            new VarExpr(ValueFactory::freshName('pathinfo-element'), Type::Mixed),
+            $taint,
+        );
+
+        return new ArrayValue($items, true, null, null, $taint, $element);
+    }
+
+    /** preg_replace('/[^a-zA-Z0-9_-]/', '_', $x) 这类白名单替换会删掉路径分隔符。 */
+    private function pregReplaceRemovesPathSeparators(array $args): bool
+    {
+        $pattern = $this->constantString($args[0] ?? null);
+        $replacement = $this->constantString($args[1] ?? null);
+        if ($pattern === null || $replacement === null) {
+            return false;
+        }
+        if (str_contains($replacement, '/') || str_contains($replacement, "\\")) {
+            return false;
+        }
+
+        // 行为探测比解析字符类可靠：区间、POSIX 类都可能隐式包含分隔符
+        $probe = "a/b\\c/../d\\e";
+        $result = @preg_replace($pattern, $replacement, $probe);
+        if (!is_string($result)) {
+            return false;
+        }
+
+        return !str_contains($result, '/') && !str_contains($result, "\\");
     }
 
     private function constantString(?Value $value): ?string

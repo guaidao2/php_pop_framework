@@ -29,6 +29,7 @@ SymPHP 是一个用 PHP 编写的、面向 **Web 安全审计** 的轻量级符�
 | 漏洞类别 | XSS、SQL 注入、命令注入、代码执行、文件包含、路径穿越、SSRF、XXE、反序列化、响应头注入 |
 | 净化规则 | `htmlspecialchars`→XSS、`addslashes`→SQLI、`escapeshellarg`→RCE、`basename`→LFI、`intval`→全部 |
 | 函数建模 | 用户函数/方法/构造器内联、内置函数语义、闭包与箭头函数、`array_map` 等回调 |
+| 净化补充 | `pathinfo` 的 basename/filename/extension 清路径穿越；`preg_replace` 白名单净化用行为探测（必要非充分，复杂上下文相关 pattern 仍可能保守放行） |
 | 对象建模 | 属性链、静态属性、构造器属性提升、匿名类、trait、继承、延迟静态绑定 |
 | 框架风格 | `$request->input()`、`$this->input->get()`、`request()->param()` 等请求访问器视为输入源 |
 | 跨文件 | 解析并索引整个目录，字面量 `include`/`require` 实际内联 |
@@ -113,6 +114,7 @@ composer install
 | `CODE_EXEC` | `eval`、`assert`、`create_function`、`call_user_func*`、`preg_replace /e` |
 | `LFI` | `include`、`require` |
 | `PATH_TRAVERSAL` | `file_put_contents`、`unlink`、`rename`、`copy`、`chmod` |
+| `FILE_UPLOAD` | `move_uploaded_file`（目标名来自 `$_FILES`、且没有扩展名黑/白名单或固定安全后缀时） |
 | `SSRF` | `file_get_contents`、`readfile`、`fopen`、`curl_init`、`fsockopen` |
 | `XXE` | `simplexml_load_string`、`simplexml_load_file`、`DOMDocument::loadXML` |
 | `OBJECT_INJECTION` | `unserialize` |
