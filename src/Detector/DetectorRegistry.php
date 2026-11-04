@@ -15,6 +15,7 @@ final class DetectorRegistry
     /** @var array<string, class-string<DetectorInterface>> */
     private const DETECTORS = [
         'deserialization' => DeserializationDetector::class,
+        'symbolic' => SymbolicDetector::class,
     ];
 
     /** @return list<string> */

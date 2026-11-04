@@ -560,6 +560,46 @@ $exit = Application::run(['popchain', 'find', __DIR__ . '/fixtures/guard_demo.ph
 $unsatOut = ob_get_clean();
 check('引擎判定 unsat 时跳过链', !str_contains($unsatOut, 'payload:') && $exit === 1, $unsatOut);
 
+require __DIR__ . '/fixtures/InProcessEngine.php';
+\PopChain\Engine\EngineRegistry::register('fake-inproc', \TestFixture\FakeSymbolicEngine::class);
+check('引擎注册表包含自定义进程内引擎', in_array('fake-inproc', \PopChain\Engine\EngineRegistry::names(), true));
+
+ob_start();
+Application::run(['popchain', 'find', __DIR__ . '/fixtures/guard_demo.php', '--engine=fake-inproc']);
+$inprocOut = ob_get_clean();
+check('进程内引擎的赋值写进 payload', str_contains($inprocOut, 'inproc_marker'), $inprocOut);
+check('进程内引擎备注显示在输出里', str_contains($inprocOut, 'fake in-process engine'), $inprocOut);
+
+ob_start();
+Application::run(['popchain', 'find', __DIR__ . '/fixtures/guard_demo.php', '--engine=none']);
+$noneOut = ob_get_clean();
+check('--engine=none 时只走启发式', !str_contains($noneOut, 'inproc_marker'), $noneOut);
+
+echo "== 符号执行检测器（合并的 SymPHP）==\n";
+$symbolicTarget = __DIR__ . '/../examples/symbolic/vuln/rce.php';
+ob_start();
+$exit = Application::run(['popchain', 'find', $symbolicTarget, '--type=symbolic']);
+$symbolicOut = ob_get_clean();
+check('--type=symbolic 能报出命令注入', $exit === 0 && str_contains($symbolicOut, 'OS Command Injection'), $symbolicOut);
+
+ob_start();
+Application::run(['popchain', 'find', $symbolicTarget, '--type=symbolic', '--json']);
+$symbolicJson = ob_get_clean();
+$symbolicDecoded = json_decode($symbolicJson, true);
+check('符号执行结果可 JSON 输出', is_array($symbolicDecoded)
+    && is_array($symbolicDecoded['findings'] ?? null)
+    && ($symbolicDecoded['findings'][0]['category'] ?? '') === 'RCE', $symbolicJson);
+
+ob_start();
+$exit = Application::run(['popchain', 'find', __DIR__ . '/../examples/symbolic/vuln/safe.php', '--type=symbolic']);
+$safeOut = ob_get_clean();
+check('安全样例不报漏洞', $exit === 1 && !str_contains($safeOut, '[F1]'), $safeOut);
+
+ob_start();
+Application::run(['popchain', '--list-types']);
+$typesOut2 = ob_get_clean();
+check('--list-types 包含 symbolic', str_contains($typesOut2, 'symbolic'), $typesOut2);
+
 echo "== CLI ==\n";
 ob_start();
 $exit = Application::run(['popchain', 'find', __DIR__ . '/../examples/demo.php', '--class=Entry', '--cmd=echo CLI']);

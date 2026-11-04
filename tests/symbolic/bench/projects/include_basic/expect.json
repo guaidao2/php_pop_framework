@@ -1,0 +1,6 @@
+{
+    "files": {
+        "main.php": [],
+        "lib.php": ["XSS"]
+    }
+}

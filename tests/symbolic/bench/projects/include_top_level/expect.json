@@ -1,0 +1,6 @@
+{
+    "files": {
+        "entry.php": [],
+        "partial.php": ["XSS"]
+    }
+}

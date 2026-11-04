@@ -5,6 +5,37 @@ external symbolic-execution / constraint-solving engine. The engine is optional:
 when it is missing, slow, or returns invalid data, the CLI falls back to the
 heuristic analysis and says so.
 
+## Two integration modes
+
+### A. In-process engine (primary path)
+
+The engine code is merged into this repository, so no JSON is involved.
+
+1. Put the code under `src/Symbolic/` with namespace `PopChain\Symbolic`
+   (the autoloader maps `PopChain\` to `src/`, so no extra registration is needed).
+2. Implement `PopChain\Engine\EngineInterface` (typically as
+   `PopChain\Symbolic\Engine`).
+3. Select it with `--engine=builtin`, or register any other name:
+
+```php
+\PopChain\Engine\EngineRegistry::register('my-engine', \PopChain\Symbolic\MyEngine::class);
+```
+
+```bash
+./popchain find ./src --engine=builtin
+./popchain find ./src --engine=my-engine
+```
+
+`analyze(array $request): ?array` receives the request array described below
+directly (no serialization) and returns the same response array. Returning
+`null`, `unknown`, or an unsat/sat result is handled exactly like the JSON mode.
+
+### B. External process engine (optional)
+
+When the engine lives outside PHP or in another repository, it can be attached as
+a subprocess. The rest of this document describes the JSON contract used in that
+mode.
+
 ## Invocation
 
 ```bash

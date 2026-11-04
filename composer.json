@@ -25,7 +25,8 @@
         "bin/popchain"
     ],
     "scripts": {
-        "test": "php tests/run.php"
+        "test": "php tests/run.php",
+        "test:symbolic": "php tests/symbolic/run.php"
     },
     "config": {
         "sort-packages": true

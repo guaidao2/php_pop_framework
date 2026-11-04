@@ -1,0 +1,7 @@
+{
+    "files": {
+        "entry.php": [],
+        "middle.php": [],
+        "view.php": ["XSS"]
+    }
+}

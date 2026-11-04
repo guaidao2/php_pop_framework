@@ -1,0 +1,6 @@
+{
+    "files": {
+        "main.php": [],
+        "src/Base.php": ["XSS"]
+    }
+}

@@ -1,0 +1,10 @@
+{
+    "files": {
+        "public/index.php": [],
+        "src/Controller/UserController.php": [],
+        "src/Input.php": [],
+        "src/Repository/UserRepository.php": ["SQLI"],
+        "src/View.php": [],
+        "src/templates/user.php": ["XSS"]
+    }
+}

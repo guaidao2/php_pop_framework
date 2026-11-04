@@ -4,6 +4,8 @@ English: [README.md](README.md)
 
 php_pop_framework 是一个 PHP 反序列化 POP 链自动生成器，面向 CTF / 授权代码审计。命令行入口是 `popchain`。
 
+仓库内同时合并了 **SymPHP** 符号执行 / 污点分析引擎，作为第二种检测类型（`--type=symbolic`），覆盖 XSS、SQL 注入、命令注入、文件包含、SSRF、XXE 等。
+
 输入一份 PHP 源码（单个文件、目录、stdin 或 URL），工具会：
 
 1. 解析所有类、属性、方法与调用点；
@@ -85,6 +87,7 @@ URL 可以直接是纯 PHP 源码；如果是 `highlight_file` / `highlight_stri
 ```bash
 ./popchain find ./src --sink=system --cmd='id'
 ./popchain find ./src --sink=file_get_contents --read-file=/flag
+./popchain find ./src --type=symbolic   # XSS / SQLi / RCE / LFI 污点分析
 ./popchain find ./src --entry=all --output=payloads.txt
 ```
 
@@ -103,22 +106,26 @@ URL 可以直接是纯 PHP 源码；如果是 `highlight_file` / `highlight_stri
 这个仓库是按框架组织的，不是单用途扫描器：
 
 - `src/Parser` 把 PHP 源码解析成类/方法元数据、守卫条件和语句级 CFG（`src/Ir`）；
-- `src/Detector` 放检测器插件。`deserialization` 是内置的第一个，新增漏洞类型实现
-  `DetectorInterface` 并在 `DetectorRegistry` 注册，CLI 的 `--type` / `--list-types`
-  就会自动带上；
+- `src/Detector` 放检测器插件。内置两个：`deserialization`（POP 链）和 `symbolic`
+  （路径敏感污点分析，底层是合并进来的 SymPHP）。新增漏洞类型实现 `DetectorInterface`
+  并在 `DetectorRegistry` 注册，CLI 的 `--type` / `--list-types` 就会自动带上；
 - `src/Analysis` 提供各检测器共用的链搜索、sink 匹配和守卫收集；
 - `src/Payload` 负责把链变成序列化 payload；
-- `src/Engine` 是可选符号执行后端的适配层。引擎是外部进程，按
-  [docs/symbolic-engine-protocol.md](docs/symbolic-engine-protocol.md) 的 JSON 协议通信；
-  没配置、不可用、超时或返回非法数据时，自动回退到启发式分析并打印提示。
+- `src/Symbolic` 是原生合并的 **SymPHP** 引擎（命名空间 `PopChain\Symbolic`，与项目共用
+  自动加载）：解析器、符号解释器、约束求解器、污点跟踪和报告器。通过 CLI 的
+  `--type=symbolic` 使用，预算参数以 `--sym-*` 暴露。`src/Engine` 仍然是适配层，
+  用来给反序列化检测器接额外的引擎。详见 [docs/symphp.md](docs/symphp.md) 和
+  [docs/symbolic-engine-protocol.md](docs/symbolic-engine-protocol.md)。
 
 ```
 CLI（--type）
   └─ 检测器注册表
-       └─ 反序列化检测器
-            ├─ ChainFinder + 守卫约束
-            ├─ [可选] 符号执行引擎（JSON 传 CFG 和约束）
-            └─ PayloadBuilder
+       ├─ 反序列化检测器
+       │    ├─ ChainFinder + 守卫约束
+       │    ├─ [可选] 引擎适配层（进程内 / JSON 进程）
+       │    └─ PayloadBuilder
+       └─ 符号执行检测器
+            └─ SymPHP 引擎（符号执行 + 污点分析）
 ```
 
 ## 命令与选项
@@ -157,7 +164,8 @@ popchain version
 | `--encode=url\|base64` | payload 直接编码，方便复制粘贴：`url` 用于 `?data=`，`base64` 便于文本传输；`--output` 也写编码后的形式 |
 | `--type=deserialization` | 要运行的检测类型，见 `--list-types` |
 | `--list-types` | 列出可用检测类型后退出 |
-| `--engine-cmd=命令` | 外部符号执行引擎：stdin 收 JSON 请求，stdout 回 JSON 响应 |
+| `--engine=none\|external\|builtin` | 引擎选择：进程内引擎（`builtin`，代码合并进仓库）、外部进程、或不启用 |
+| `--engine-cmd=命令` | 外部引擎命令：stdin 收 JSON 请求，stdout 回 JSON 响应 |
 | `--engine-timeout=秒` | 引擎超时时间（默认 10 秒） |
 
 ## 工作原理
@@ -242,14 +250,18 @@ php_pop_framework/
 │   ├── Parser/               # AST → 模型 + CFG + 守卫约束
 │   ├── Ir/                   # 语句级控制流图
 │   ├── Model/                # 类/方法/属性/调用点/链/边
-│   ├── Detector/             # 检测器插件（反序列化优先）
+│   ├── Detector/             # 检测器插件（反序列化、符号执行）
 │   ├── Engine/               # 可选符号执行引擎适配层
 │   ├── Analysis/             # sink 识别 + 链搜索
+│   ├── Symbolic/             # 合并的 SymPHP 引擎（SymPHP 命名空间）
 │   └── Payload/              # 对象图 → 手写序列化
 ├── examples/demo.php         # 示例漏洞代码
+├── examples/symbolic/vuln/   # SymPHP 示例漏洞代码
 ├── tests/run.php             # 测试套件
+├── tests/symbolic/           # SymPHP 引擎测试（合并）
 ├── tests/fixtures/           # 解析/链搜索用例
-├── docs/symbolic-engine-protocol.md  # 可选引擎的通信协议
+├── docs/symphp.md            # 合并的 SymPHP 引擎文档
+├── docs/symbolic-engine-protocol.md  # 可插拔引擎的通信协议
 ├── composer.json             # 依赖与自动加载定义
 ├── README.zh-CN.md           # 中文文档
 ├── LICENSE                   # MIT
@@ -259,7 +271,8 @@ php_pop_framework/
 ## 测试
 
 ```bash
-php tests/run.php
+php tests/run.php           # php_pop_framework 测试
+php tests/symbolic/run.php  # 合并的 SymPHP 引擎测试
 ```
 
 测试覆盖解析层、链搜索、payload 构建和 CLI。其中有几条用例会把 payload 真正反序列化、确认 sink 确实被触发——链到底能不能用，只有真跑一遍才知道。此外还检查 trait、继承、局部污点、`__get` / `__isset` 边、命名空间、private/protected 序列化键，以及 CLI 的各条输入路径。
