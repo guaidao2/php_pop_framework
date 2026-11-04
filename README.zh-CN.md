@@ -131,6 +131,7 @@ popchain version
 | `--include-vendor` | 连 `vendor/` 目录一起扫描 |
 | `--json` | 以 JSON 输出 |
 | `--obfuscate` | 字符串改用 `S:` 十六进制转义，关键字不会被过滤器看到 |
+| `--encode=url\|base64` | payload 直接编码，方便复制粘贴：`url` 用于 `?data=`，`base64` 便于文本传输；`--output` 也写编码后的形式 |
 
 ## 工作原理
 
@@ -158,7 +159,7 @@ $this->target = $this->source;   // 属性到属性
 system('ping -c1 ' . $x);        // 字符串拼接保留可控部分
 ```
 
-payload 由 `src/Payload/Serializer.php` 直接按 PHP 序列化格式拼接，**不会加载或执行目标类**。属性键遵循 PHP 约定：
+payload 由 `src/Payload/Serializer.php` 直接按 PHP 序列化格式拼接，**不会加载或执行目标类**。含 private/protected 属性的 payload 带 NUL 字节，shell 和终端通常会把它吃掉：别直接复制输出的那一行，用 `--output` 取文件，或者加 `--encode=url` / `--encode=base64`。属性键遵循 PHP 约定：
 
 - public：`name`
 - protected：`\0*\0name`
@@ -181,6 +182,7 @@ payload 由 `src/Payload/Serializer.php` 直接按 PHP 序列化格式拼接，*
 - trait 冲突适配：`insteadof` 选中覆盖方，`as` 支持别名与可见性修改
 - `__wakeup` 对属性的字面量重置会在任意嵌套深度上被识别；依赖这类属性的链，生成的 payload 会故意把声明属性数写得比类实际属性多、body 少给，让 `unserialize()` 在该对象处失败：`__wakeup` 被跳过、已构造对象的析构函数照跑（CVE-2016-7124 式绕过），CLI 会打印提示。定义了 `__unserialize` 的类按 PHP 语义单独处理（此时不会调用 `__wakeup`）
 - 参数回溯：sink 参数来自方法参数时，沿调用链反推最终要赋值的属性；调用点传的是常量时按不可控处理，不会产出没有 sink 值的链
+- 守卫条件：沿链遇到 `$this->is_admin === true`、`$this->token === 'admin_token'`、`if (!$this->flag)` 这类字面量比较时，会把对应属性值写进 payload，被守卫包住的代码分支才会真的执行
 - `__unserialize(array $data)` 入口：`$data['cmd']` 视为攻击者可控数据，赋给属性后进 sink、或直接作为 sink 实参都能出链
 - sink 分类：RCE、文件读写/删除/移动、文件包含、反序列化、可调用、环境、变量注入等
 - payload 输出：文本链路径、JSON（带工具名与版本）、payload 落盘；终端里 NUL 字节转义显示，`--output` 仍写原始字节

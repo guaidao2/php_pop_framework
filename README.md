@@ -131,6 +131,7 @@ popchain version
 | `--include-vendor` | Also scan the `vendor/` directory |
 | `--json` | Emit JSON |
 | `--obfuscate` | Write strings as `S:` hex escapes so keyword filters do not see them |
+| `--encode=url\|base64` | Encode the payload for direct copy/paste: `url` for a `?data=` query, `base64` for log-safe text; `--output` writes the encoded form too |
 
 ## How it works
 
@@ -158,7 +159,7 @@ $this->target = $this->source;   // property to property
 system('ping -c1 ' . $x);        // string concatenation keeps the controllable part
 ```
 
-The payload is assembled straight into PHP's serialization format by `src/Payload/Serializer.php`; it **never loads or executes the target classes**. Property keys follow PHP conventions:
+The payload is assembled straight into PHP's serialization format by `src/Payload/Serializer.php`; it **never loads or executes the target classes**. Payloads with private/protected properties contain NUL bytes, which most shells and terminals drop: take them from `--output` or use `--encode=url` / `--encode=base64` instead of copying the printed line. Property keys follow PHP conventions:
 
 - public: `name`
 - protected: `\0*\0name`
@@ -181,6 +182,7 @@ The payload is assembled straight into PHP's serialization format by `src/Payloa
 - Trait conflict adaptation: `insteadof` chooses the winning method, `as` adds aliases or changes visibility
 - `__wakeup` literal resets are detected at every nesting depth. When a chain depends on a property that `__wakeup` overwrites, the generated payload deliberately declares more properties than the class actually has so `unserialize()` fails at that object: `__wakeup` is skipped while the already-built objects are still destructed (CVE-2016-7124-style bypass), and the CLI marks the chain with a note. Classes that define `__unserialize` are handled separately (PHP does not call `__wakeup` for them)
 - Argument backtracking: when a sink argument comes from a method parameter, trace it back along the call chain to the property that ultimately has to be assigned; constant arguments at the call site are reported as not controllable instead of producing a chain
+- Guard conditions: literal comparisons on `$this` properties (`$this->is_admin === true`, `$this->token === 'admin_token'`, `if (!$this->flag)`) are detected while walking the chain and written into the payload, so branches guarded by those checks actually run
 - `__unserialize(array $data)` entries: `$data['cmd']` reads are treated as attacker-controlled data, both when assigned to a property and when passed straight to a sink
 - Sink categories: RCE, file read/write/delete/move, file inclusion, deserialization, callable, environment, variable injection, and more
 - Payload output: textual chain paths, JSON (with tool name and version), payloads written to disk; NUL bytes are escaped on screen while `--output` keeps the raw bytes

@@ -454,6 +454,41 @@ $extracted = Application::extractPhpSource($highlighted);
 check('能从 highlight_file 渲染页提取源码', is_string($extracted) && str_contains($extracted, 'class ChainEntry'), is_string($extracted) ? substr($extracted, 0, 80) : 'null');
 check('普通 HTML 页面判为非源码', Application::extractPhpSource('<html><body><h1>hello</h1></body></html>') === null);
 
+echo "== 属性守卫前置条件 ==\n";
+$guard = (new ProjectParser())->parsePath(__DIR__ . '/fixtures/guard_demo.php');
+$guardByEntry = chainsByEntry((new ChainFinder($guard, new SinkScanner()))->find());
+check('带属性比较守卫的链能找到', isset($guardByEntry['GuardEntry']));
+
+$guardPayload = (new PayloadBuilder($guard))->build($guardByEntry['GuardEntry'], 'echo GUARD_OK');
+check('payload 写入 is_admin=true', str_contains($guardPayload, 's:8:"is_admin";b:1;'), $guardPayload);
+check('payload 写入 private token=admin_token', str_contains($guardPayload, "\0GuardSettings\0token") && str_contains($guardPayload, 'admin_token'), $guardPayload);
+
+require __DIR__ . '/fixtures/guard_demo.php';
+ob_start();
+$guardObject = @unserialize($guardPayload);
+unset($guardObject);
+gc_collect_cycles();
+$guardOutput = (string) ob_get_clean();
+check('守卫条件满足后 payload 真实执行', str_contains($guardOutput, 'GUARD_OK'), $guardOutput);
+
+echo "== payload 编码输出 ==\n";
+ob_start();
+Application::run(['popchain', 'find', __DIR__ . '/fixtures/private_collision_demo.php', '--encode=url']);
+$urlEncoded = ob_get_clean();
+check('--encode=url 输出 URL 编码后的 payload', str_contains($urlEncoded, '%00') && !str_contains($urlEncoded, "\0"), $urlEncoded);
+
+ob_start();
+Application::run(['popchain', 'find', __DIR__ . '/fixtures/private_collision_demo.php', '--encode=base64']);
+$base64Out = ob_get_clean();
+$base64Line = trim((string) preg_replace('/^.*payload:\s*/s', '', $base64Out));
+$decodedPayload = base64_decode($base64Line, true);
+check('--encode=base64 可解回 payload', is_string($decodedPayload) && str_starts_with($decodedPayload, 'O:'), $base64Line);
+
+ob_start();
+$exit = Application::run(['popchain', 'find', __DIR__ . '/fixtures/private_collision_demo.php', '--encode=nope']);
+ob_end_clean();
+check('非法 --encode 退出码为 2', $exit === 2, 'exit=' . $exit);
+
 echo "== CLI ==\n";
 ob_start();
 $exit = Application::run(['popchain', 'find', __DIR__ . '/../examples/demo.php', '--class=Entry', '--cmd=echo CLI']);

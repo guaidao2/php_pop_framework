@@ -17,6 +17,7 @@ final class MethodInfo
         public string $declaringClass = '',
         public array $stringUses = [],
         public array $constantProperties = [],
+        public array $preconditions = [],
     ) {
     }
 

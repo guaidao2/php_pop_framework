@@ -56,11 +56,42 @@ final class PayloadBuilder
             $nodes[$current] = $next;
         }
 
+        $this->applyPreconditions($chain, $nodes, $fromNode);
         $this->fillArraySlots($chain, $nodes, $fromNode);
         $this->applySinkValue($chain, $nodes, $fromNode, $current, $value);
         $this->padWakeupBlockedNodes($nodes);
 
         return (new Serializer($this->obfuscate))->serializeNode($nodes[0]);
+    }
+
+    /**
+     * 把方法里的条件判断要求写进对应对象：
+     * 例如 if ($this->is_admin === true) / if ($this->token === 'admin_token')。
+     *
+     * @param array<int, PayloadNode> $nodes
+     * @param array<int, int> $fromNode
+     */
+    private function applyPreconditions(Chain $chain, array $nodes, array $fromNode): void
+    {
+        $this->applyMethodPreconditions($nodes[0] ?? null, $chain->entryClass, $chain->entryMethod);
+
+        foreach ($chain->edges as $index => $edge) {
+            $nodeIndex = $this->isInternalEdge($edge)
+                ? ($fromNode[$index] ?? 0)
+                : (($fromNode[$index] ?? 0) + 1);
+            $this->applyMethodPreconditions($nodes[$nodeIndex] ?? null, $edge->toClass, $edge->toMethod);
+        }
+    }
+
+    /** @param array<string, mixed> $preconditions */
+    private function applyMethodPreconditions(?PayloadNode $node, ClassInfo $class, MethodInfo $method): void
+    {
+        if ($node === null) {
+            return;
+        }
+        foreach ($method->preconditions as $property => $value) {
+            $this->setProperty($node, $class, (string) $property, $value);
+        }
     }
 
     /** 方法调用 / 静态调用不改变对象图，只是同一个对象内的跳转。 */
