@@ -119,6 +119,7 @@ popchain version
 | `--max-chains=50` | Maximum number of chains to output |
 | `--include-vendor` | Also scan the `vendor/` directory |
 | `--json` | Emit JSON |
+| `--obfuscate` | Write strings as `S:` hex escapes so keyword filters do not see them |
 
 ## How it works
 
@@ -167,7 +168,7 @@ The payload is assembled straight into PHP's serialization format by `src/Payloa
 - `__call` / `__callStatic`: `$args[0]` is mapped back to the corresponding argument at the call site
 - `__unserialize(array $data)`: nested reads such as `$data['a']['b']` are handled, not just one level deep
 - Trait conflict adaptation: `insteadof` chooses the winning method, `as` adds aliases or changes visibility
-- `__wakeup` literal resets are taken into account at every nesting depth: a chain whose final property is overwritten by `__wakeup` is dropped instead of being reported; classes that define `__unserialize` are handled separately (PHP does not call `__wakeup` for them)
+- `__wakeup` literal resets are detected at every nesting depth. When a chain depends on a property that `__wakeup` overwrites, the generated payload deliberately declares more properties than the class actually has so `unserialize()` fails at that object: `__wakeup` is skipped while the already-built objects are still destructed (CVE-2016-7124-style bypass), and the CLI marks the chain with a note. Classes that define `__unserialize` are handled separately (PHP does not call `__wakeup` for them)
 - Argument backtracking: when a sink argument comes from a method parameter, trace it back along the call chain to the property that ultimately has to be assigned; constant arguments at the call site are reported as not controllable instead of producing a chain
 - `__unserialize(array $data)` entries: `$data['cmd']` reads are treated as attacker-controlled data, both when assigned to a property and when passed straight to a sink
 - Sink categories: RCE, file read/write/delete/move, file inclusion, deserialization, callable, environment, variable injection, and more

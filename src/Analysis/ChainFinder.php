@@ -116,10 +116,6 @@ final class ChainFinder
             if ($hit->category === 'callable') {
                 continue;
             }
-            // __wakeup 在 __destruct 之前执行，被它写成常量的属性不再可控
-            if ($this->overwrittenByWakeup($class, $method, $hit->arg)) {
-                continue;
-            }
             if (!$this->argControllable($hit->arg, $method, $edges)) {
                 continue;
             }
@@ -143,9 +139,6 @@ final class ChainFinder
         // 2) 展开调用点
         foreach ($method->calls as $call) {
             foreach ($this->edgesFor($class, $method, $call) as $edge) {
-                if ($this->edgeBlockedByWakeup($edge)) {
-                    continue;
-                }
                 $key = $edge->toClass->name . '::' . $edge->toMethod->name;
                 if (isset($visited[$key])) {
                     continue;
@@ -583,46 +576,6 @@ final class ChainFinder
                 : null;
         }
         return null;
-    }
-
-    /** 这条边写入的属性是否会被 from 类的 __wakeup 覆盖。 */
-    private function edgeBlockedByWakeup(Edge $edge): bool
-    {
-        if ($edge->viaProperty === '(this)' || $edge->viaProperty === '(static)') {
-            return false;
-        }
-        return $this->propertyOverwrittenByWakeup($edge->fromClass, $edge->viaProperty);
-    }
-
-    /** 类（含父类）的 __wakeup 是否把该属性写成了字面量。 */
-    private function propertyOverwrittenByWakeup(ClassInfo $class, string $property): bool
-    {
-        // 类定义了 __unserialize 时，PHP 不会调用 __wakeup
-        if ($this->effectiveMethod($class, '__unserialize') !== null) {
-            return false;
-        }
-        $wakeup = $this->effectiveMethod($class, '__wakeup');
-        if ($wakeup === null) {
-            return false;
-        }
-        return in_array($property, $wakeup->constantProperties, true);
-    }
-
-    /** 当前方法所在对象的 __wakeup 是否把这个属性写成了字面量。 */
-    private function overwrittenByWakeup(ClassInfo $class, MethodInfo $method, ArgInfo $arg): bool
-    {
-        if (strcasecmp($method->name, '__wakeup') === 0) {
-            return false;
-        }
-        $name = $arg->targetProperty();
-        if ($name === null) {
-            return false;
-        }
-        $wakeup = $this->effectiveMethod($class, '__wakeup');
-        if ($wakeup === null) {
-            return false;
-        }
-        return in_array($name, $wakeup->constantProperties, true);
     }
 
     /**

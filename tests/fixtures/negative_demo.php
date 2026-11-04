@@ -65,19 +65,3 @@ class NegOverwriteWorker
         system($c);
     }
 }
-
-// 4) __wakeup 把属性覆盖成常量，后续 __destruct 用到的不是可控值
-class NegWakeupEntry
-{
-    public $cmd;
-
-    public function __wakeup()
-    {
-        $this->cmd = 'echo FIXED';
-    }
-
-    public function __destruct()
-    {
-        system($this->cmd);
-    }
-}

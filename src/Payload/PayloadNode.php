@@ -11,6 +11,9 @@ final class PayloadNode
     /** @var array<string, array{value:mixed, visibility:string, declaringClass:string}> */
     public array $properties = [];
 
+    /** 额外声明几个属性但不写内容：让 unserialize 在该对象处解析失败，从而跳过 __wakeup */
+    public int $declaredBump = 0;
+
     public function __construct(public string $class)
     {
     }

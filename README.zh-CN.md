@@ -119,6 +119,7 @@ popchain version
 | `--max-chains=50` | 最多输出多少条链 |
 | `--include-vendor` | 连 `vendor/` 目录一起扫描 |
 | `--json` | 以 JSON 输出 |
+| `--obfuscate` | 字符串改用 `S:` 十六进制转义，关键字不会被过滤器看到 |
 
 ## 工作原理
 
@@ -167,7 +168,7 @@ payload 由 `src/Payload/Serializer.php` 直接按 PHP 序列化格式拼接，*
 - `__call` / `__callStatic`：`$args[0]` 会映射回调用点对应的实参
 - `__unserialize(array $data)`：支持 `$data['a']['b']` 这种嵌套读取，不只是一层
 - trait 冲突适配：`insteadof` 选中覆盖方，`as` 支持别名与可见性修改
-- `__wakeup` 对属性的字面量重置会在任意嵌套深度上被识别：最终属性被 `__wakeup` 覆盖的链直接丢弃，不再当作可用链；定义了 `__unserialize` 的类按 PHP 语义单独处理（此时不会调用 `__wakeup`）
+- `__wakeup` 对属性的字面量重置会在任意嵌套深度上被识别；依赖这类属性的链，生成的 payload 会故意把声明属性数写得比类实际属性多、body 少给，让 `unserialize()` 在该对象处失败：`__wakeup` 被跳过、已构造对象的析构函数照跑（CVE-2016-7124 式绕过），CLI 会打印提示。定义了 `__unserialize` 的类按 PHP 语义单独处理（此时不会调用 `__wakeup`）
 - 参数回溯：sink 参数来自方法参数时，沿调用链反推最终要赋值的属性；调用点传的是常量时按不可控处理，不会产出没有 sink 值的链
 - `__unserialize(array $data)` 入口：`$data['cmd']` 视为攻击者可控数据，赋给属性后进 sink、或直接作为 sink 实参都能出链
 - sink 分类：RCE、文件读写/删除/移动、文件包含、反序列化、可调用、环境、变量注入等

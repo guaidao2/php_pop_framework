@@ -344,13 +344,49 @@ foreach ($execCases as $entry => $marker) {
 echo "== __wakeup 重置属性 ==\n";
 $wakeBlocked = (new ProjectParser())->parsePath(__DIR__ . '/fixtures/wakeup_blocked.php');
 $blockedByEntry = chainsByEntry((new ChainFinder($wakeBlocked, new SinkScanner()))->find());
-check('深层 __wakeup 重置的属性不报链', !isset($blockedByEntry['WakeBlockedApp']));
+check('深层 __wakeup 重置的链仍然出链', isset($blockedByEntry['WakeBlockedApp']));
+$markerFile = tempnam(sys_get_temp_dir(), 'popchain_wakeup_');
+file_put_contents((string) $markerFile, 'WAKEUP_BYPASS_OK');
+$blockedPayload = (new PayloadBuilder($wakeBlocked))->build($blockedByEntry['WakeBlockedApp'], (string) $markerFile);
+check('payload 声明数大于实际、body 故意少写（CVE-2016-7124 绕过）', str_contains($blockedPayload, 'O:17:"WakeBlockedCacher":3:'), $blockedPayload);
+
+require __DIR__ . '/fixtures/wakeup_blocked.php';
+ob_start();
+$blockedObject = @unserialize($blockedPayload);
+$blockedRead = (string) ob_get_clean();
+check('解析失败但析构照跑，__wakeup 被跳过', $blockedObject === false && str_contains($blockedRead, 'WAKEUP_BYPASS_OK'), $blockedRead);
+if ($markerFile !== false) {
+    unlink($markerFile);
+}
 
 $wakeOpen = (new ProjectParser())->parsePath(__DIR__ . '/fixtures/wakeup_open.php');
 $openByEntry = chainsByEntry((new ChainFinder($wakeOpen, new SinkScanner()))->find());
 check('没有 __wakeup 的同构链仍然出链', isset($openByEntry['WakeOpenApp']));
 $wakeOpenPayload = (new PayloadBuilder($wakeOpen))->build($openByEntry['WakeOpenApp'], 'echo OPEN_OK');
 check('同构链 payload 写入私有的 filename', str_contains($wakeOpenPayload, "\0WakeOpenCacher\0filename"), $wakeOpenPayload);
+
+ob_start();
+Application::run(['popchain', 'find', __DIR__ . '/fixtures/wakeup_blocked.php']);
+$blockedCli = ob_get_clean();
+check('CLI 提示需要 CVE-2016-7124', str_contains($blockedCli, 'CVE-2016-7124'), $blockedCli);
+
+ob_start();
+Application::run(['popchain', 'find', __DIR__ . '/fixtures/wakeup_open.php']);
+$openCli = ob_get_clean();
+check('file_read 默认值使用文件路径', str_contains($openCli, '/etc/passwd'), $openCli);
+
+ob_start();
+Application::run(['popchain', 'find', __DIR__ . '/fixtures/wakeup_open.php', '--obfuscate', '--cmd=/flag']);
+$obfuscated = ob_get_clean();
+check('--obfuscate 用 S: 十六进制转义字符串', str_contains($obfuscated, 'S:') && str_contains($obfuscated, '\2f'), $obfuscated);
+$payloadPart = substr($obfuscated, (int) strpos($obfuscated, 'payload:'));
+check('--obfuscate 后 payload 不含明文 flag', !str_contains($payloadPart, 'flag'), $payloadPart);
+
+$obfuscatedPayload = trim((string) preg_replace('/^.*payload:\s*/s', '', $obfuscated));
+require __DIR__ . '/fixtures/wakeup_open.php';
+$reparsed = @unserialize($obfuscatedPayload);
+check('--obfuscate 的 payload 仍可被 PHP 解析', $reparsed !== false, $obfuscatedPayload);
+unset($reparsed);
 
 echo "== CLI ==\n";
 ob_start();
