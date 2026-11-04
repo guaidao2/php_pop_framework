@@ -380,7 +380,7 @@ $openCli = ob_get_clean();
 check('file_read 默认值使用文件路径', str_contains($openCli, '/etc/passwd'), $openCli);
 
 ob_start();
-Application::run(['popchain', 'find', __DIR__ . '/fixtures/wakeup_open.php', '--obfuscate', '--cmd=/flag']);
+Application::run(['popchain', 'find', __DIR__ . '/fixtures/wakeup_open.php', '--obfuscate', '--pop-cmd=/flag']);
 $obfuscated = ob_get_clean();
 check('--obfuscate 用 S: 十六进制转义字符串', str_contains($obfuscated, 'S:') && str_contains($obfuscated, '\2f'), $obfuscated);
 $payloadPart = substr($obfuscated, (int) strpos($obfuscated, 'payload:'));
@@ -405,46 +405,43 @@ $fileSinkCli = static function (array $extra) {
 $defaultRead = $fileSinkCli(['--class=ReadEntry']);
 check('file_read 默认值使用文件路径', str_contains($defaultRead, '/etc/passwd'), $defaultRead);
 
-$readFlag = $fileSinkCli(['--class=ReadEntry', '--read-file=/flag']);
-check('--read-file 覆盖文件读取目标', str_contains($readFlag, '/flag'), $readFlag);
+$readFlag = $fileSinkCli(['--class=ReadEntry', '--pop-read-file=/flag']);
+check('--pop-read-file 覆盖文件读取目标', str_contains($readFlag, '/flag'), $readFlag);
 
-$legacyCmd = $fileSinkCli(['--class=ReadEntry', '--cmd=/legacy.txt']);
-check('旧的 --cmd 仍可覆盖（向后兼容）', str_contains($legacyCmd, '/legacy.txt'), $legacyCmd);
+$writeFile = $fileSinkCli(['--class=WriteEntry', '--pop-write-file=/tmp/writeme.txt']);
+check('--pop-write-file 覆盖写入目标', str_contains($writeFile, '/tmp/writeme.txt'), $writeFile);
 
-$writeFile = $fileSinkCli(['--class=WriteEntry', '--write-file=/tmp/writeme.txt']);
-check('--write-file 覆盖写入目标', str_contains($writeFile, '/tmp/writeme.txt'), $writeFile);
+$deleteFile = $fileSinkCli(['--class=DeleteEntry', '--pop-delete-file=/tmp/delete-me.txt']);
+check('--pop-delete-file 覆盖删除目标', str_contains($deleteFile, '/tmp/delete-me.txt'), $deleteFile);
 
-$deleteFile = $fileSinkCli(['--class=DeleteEntry', '--delete-file=/tmp/delete-me.txt']);
-check('--delete-file 覆盖删除目标', str_contains($deleteFile, '/tmp/delete-me.txt'), $deleteFile);
+$moveFile = $fileSinkCli(['--class=MoveEntry', '--pop-move-file=/tmp/move-me.txt']);
+check('--pop-move-file 覆盖移动目标', str_contains($moveFile, '/tmp/move-me.txt'), $moveFile);
 
-$moveFile = $fileSinkCli(['--class=MoveEntry', '--move-file=/tmp/move-me.txt']);
-check('--move-file 覆盖移动目标', str_contains($moveFile, '/tmp/move-me.txt'), $moveFile);
+$includeFile = $fileSinkCli(['--class=IncludeEntry', '--pop-read-file=/tmp/inc.php']);
+check('--pop-read-file 同时覆盖 include 目标', str_contains($includeFile, '/tmp/inc.php'), $includeFile);
 
-$includeFile = $fileSinkCli(['--class=IncludeEntry', '--read-file=/tmp/inc.php']);
-check('--read-file 同时覆盖 include 目标', str_contains($includeFile, '/tmp/inc.php'), $includeFile);
+$chmodFile = $fileSinkCli(['--class=ChmodEntry', '--pop-chmod-file=/tmp/mode.txt']);
+check('--pop-chmod-file 覆盖权限目标', str_contains($chmodFile, '/tmp/mode.txt'), $chmodFile);
 
-$chmodFile = $fileSinkCli(['--class=ChmodEntry', '--chmod-file=/tmp/mode.txt']);
-check('--chmod-file 覆盖权限目标', str_contains($chmodFile, '/tmp/mode.txt'), $chmodFile);
+$ssrfUrl = $fileSinkCli(['--class=SsrfEntry', '--pop-ssrf-url=http://169.254.169.254/']);
+check('--pop-ssrf-url 覆盖 SSRF 目标', str_contains($ssrfUrl, 'http://169.254.169.254/'), $ssrfUrl);
 
-$ssrfUrl = $fileSinkCli(['--class=SsrfEntry', '--ssrf-url=http://169.254.169.254/']);
-check('--ssrf-url 覆盖 SSRF 目标', str_contains($ssrfUrl, 'http://169.254.169.254/'), $ssrfUrl);
+$envValue = $fileSinkCli(['--class=EnvEntry', '--pop-env-value=POC=1']);
+check('--pop-env-value 覆盖环境变量值', str_contains($envValue, 'POC=1'), $envValue);
 
-$envValue = $fileSinkCli(['--class=EnvEntry', '--env-value=POC=1']);
-check('--env-value 覆盖环境变量值', str_contains($envValue, 'POC=1'), $envValue);
+$varValue = $fileSinkCli(['--class=VarEntry', '--pop-var-value=x=1']);
+check('--pop-var-value 覆盖变量注入值', str_contains($varValue, 'x=1'), $varValue);
 
-$varValue = $fileSinkCli(['--class=VarEntry', '--var-value=x=1']);
-check('--var-value 覆盖变量注入值', str_contains($varValue, 'x=1'), $varValue);
+$mailTo = $fileSinkCli(['--class=MailEntry', '--pop-mail-to=test@example.test']);
+check('--pop-mail-to 覆盖收件人', str_contains($mailTo, 'test@example.test'), $mailTo);
 
-$mailTo = $fileSinkCli(['--class=MailEntry', '--mail-to=test@example.test']);
-check('--mail-to 覆盖收件人', str_contains($mailTo, 'test@example.test'), $mailTo);
-
-$serialized = $fileSinkCli(['--class=DeserializeEntry', '--serialized=O:8:"stdClass":0:{}']);
-check('--serialized 覆盖反序列化数据', str_contains($serialized, 'stdClass'), $serialized);
+$serialized = $fileSinkCli(['--class=DeserializeEntry', '--pop-serialized=O:8:"stdClass":0:{}']);
+check('--pop-serialized 覆盖反序列化数据', str_contains($serialized, 'stdClass'), $serialized);
 
 ob_start();
 Application::run(['popchain', 'help']);
 $helpText = ob_get_clean();
-check('帮助里列出 --read-file / --write-file', str_contains($helpText, '--read-file') && str_contains($helpText, '--write-file'));
+check('帮助里列出 --pop-read-file / --pop-write-file', str_contains($helpText, '--pop-read-file') && str_contains($helpText, '--pop-write-file'));
 
 echo "== URL 源码提取 ==\n";
 $rawSource = "<?php class A { public \$x; }";
@@ -702,7 +699,7 @@ check('可满足的守卫链仍然保留', str_contains($conflictOut, 'GuardEntr
 
 echo "== CLI ==\n";
 ob_start();
-$exit = Application::run(['popchain', 'find', __DIR__ . '/../examples/demo.php', '--class=Entry', '--cmd=echo CLI']);
+$exit = Application::run(['popchain', 'find', __DIR__ . '/../examples/demo.php', '--class=Entry', '--pop-cmd=echo CLI']);
 $cliOutput = ob_get_clean();
 check('find --class=Entry 退出码为 0', $exit === 0, 'exit=' . $exit);
 check('find --class=Entry 输出 2 条 payload', substr_count($cliOutput, 'payload:') === 2, '实际 ' . substr_count($cliOutput, 'payload:'));

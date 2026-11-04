@@ -50,7 +50,7 @@ sudo apt install php-parser
 ./popchain version
 ./popchain help
 # 或者
-php popchain find ./src --cmd='id'
+php popchain find ./src --pop-cmd='id'
 ```
 
 CLI 输出默认英文，加 `--lang=zh`（或 `--lang zh`）切换中文。
@@ -63,21 +63,21 @@ CLI 输出默认英文，加 `--lang=zh`（或 `--lang zh`）切换中文。
 
 ```bash
 ./popchain scan ./chal.php
-./popchain find ./chal.php --cmd='id'
+./popchain find ./chal.php --pop-cmd='id'
 ```
 
 ### 标准输入（不落盘）
 
 ```bash
-cat chal.php | ./popchain find --stdin --cmd='id'
+cat chal.php | ./popchain find --stdin --pop-cmd='id'
 # 或
-./popchain find --stdin --cmd='id' < chal.php
+./popchain find --stdin --pop-cmd='id' < chal.php
 ```
 
 ### 从 URL 拉取
 
 ```bash
-./popchain find --url=https://example.com/chal.php --cmd='id'
+./popchain find --url=https://example.com/chal.php --pop-cmd='id'
 ```
 
 URL 可以直接是纯 PHP 源码；如果是 `highlight_file` / `highlight_string` 渲染出来的源码页（CTF 题里很常见），工具会去掉 HTML 标签、反转义后还原源码再分析。其它渲染后的 HTML（页面已经执行过、需要登录、API 返回）无法还原，工具会提示该 URL 不是源码。
@@ -85,8 +85,8 @@ URL 可以直接是纯 PHP 源码；如果是 `highlight_file` / `highlight_stri
 ### 目录
 
 ```bash
-./popchain find ./src --sink=system --cmd='id'
-./popchain find ./src --sink=file_get_contents --read-file=/flag
+./popchain find ./src --sink=system --pop-cmd='id'
+./popchain find ./src --sink=file_get_contents --pop-read-file=/flag
 ./popchain find ./src --type=symbolic   # XSS / SQLi / RCE / LFI 污点分析
 ./popchain find ./src --entry=all --output=payloads.txt
 ```
@@ -161,17 +161,17 @@ popchain version
 | `--entry=a,b` | 入口魔术方法，默认 `__destruct,__wakeup,__unserialize`；`--entry=all` 启用全部魔术方法 |
 | `--class=Entry` | 只保留指定类（短名或完整命名空间）作为入口的链 |
 | `--sink=system` | 只保留命中指定 sink 的结果（两个检测器都生效） |
-| `--cmd=值` | 命令执行类 sink 的写入值（默认 `id`） |
-| `--read-file=路径` | 文件读取 / `include` 类 sink 的写入值（默认 `/etc/passwd`） |
-| `--write-file=路径` | 文件写入类 sink 的写入值（默认 `/tmp/popchain.txt`） |
-| `--delete-file=路径` | 文件删除类 sink 的写入值（默认 `/tmp/popchain.txt`） |
-| `--move-file=路径` | 文件移动 / 复制类 sink 的写入值（默认 `/tmp/popchain.txt`） |
-| `--chmod-file=路径` | `chmod` 类 sink 的写入值（默认 `/tmp/popchain.txt`） |
-| `--ssrf-url=地址` | SSRF 类 sink（`simplexml_load_file` / `get_headers` 等）的写入值（默认 `http://127.0.0.1/`） |
-| `--env-value=文本` | `putenv` 类 sink 的写入值（默认 `POPCHAIN=1`） |
-| `--var-value=文本` | `parse_str` 类 sink 的写入值（默认 `popchain=1`） |
-| `--mail-to=地址` | `mail` 类 sink 的写入值（默认 `a@b.test`） |
-| `--serialized=数据` | `unserialize` 类 sink 的写入值（默认 `a:0:{}`） |
+| `--pop-cmd=值` | 命令执行类 sink 的写入值（默认 `id`） |
+| `--pop-read-file=路径` | 文件读取 / `include` 类 sink 的写入值（默认 `/etc/passwd`） |
+| `--pop-write-file=路径` | 文件写入类 sink 的写入值（默认 `/tmp/popchain.txt`） |
+| `--pop-delete-file=路径` | 文件删除类 sink 的写入值（默认 `/tmp/popchain.txt`） |
+| `--pop-move-file=路径` | 文件移动 / 复制类 sink 的写入值（默认 `/tmp/popchain.txt`） |
+| `--pop-chmod-file=路径` | `chmod` 类 sink 的写入值（默认 `/tmp/popchain.txt`） |
+| `--pop-ssrf-url=地址` | SSRF 类 sink（`simplexml_load_file` / `get_headers` 等）的写入值（默认 `http://127.0.0.1/`） |
+| `--pop-env-value=文本` | `putenv` 类 sink 的写入值（默认 `POPCHAIN=1`） |
+| `--pop-var-value=文本` | `parse_str` 类 sink 的写入值（默认 `popchain=1`） |
+| `--pop-mail-to=地址` | `mail` 类 sink 的写入值（默认 `a@b.test`） |
+| `--pop-serialized=数据` | `unserialize` 类 sink 的写入值（默认 `a:0:{}`） |
 | `--output=文件` | 把 payload 写入文件；JSON 模式写 JSON |
 | `--max-depth=8` | 链最大深度 |
 | `--max-chains=50` | 最多输出多少条链 |

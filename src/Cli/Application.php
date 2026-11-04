@@ -17,7 +17,7 @@ use PopChain\Payload\PayloadBuilder;
  */
 final class Application
 {
-    public const VERSION = '2.8.4';
+    public const VERSION = '2.8.5';
 
     private const DEFAULT_ENTRIES = ['__destruct', '__wakeup', '__unserialize'];
 
@@ -38,19 +38,19 @@ final class Application
 
     /** sink 分类 => 对应取值选项；未写时再用 DEFAULT_VALUES 的默认值。 */
     private const CATEGORY_OPTIONS = [
-        'rce' => 'cmd',
-        'file_read' => 'read-file',
-        'include' => 'read-file',
-        'file_write' => 'write-file',
-        'file_delete' => 'delete-file',
-        'file_move' => 'move-file',
-        'file_copy' => 'move-file',
-        'file_perms' => 'chmod-file',
-        'ssrf' => 'ssrf-url',
-        'env' => 'env-value',
-        'var' => 'var-value',
-        'mail' => 'mail-to',
-        'deserialize' => 'serialized',
+        'rce' => 'pop-cmd',
+        'file_read' => 'pop-read-file',
+        'include' => 'pop-read-file',
+        'file_write' => 'pop-write-file',
+        'file_delete' => 'pop-delete-file',
+        'file_move' => 'pop-move-file',
+        'file_copy' => 'pop-move-file',
+        'file_perms' => 'pop-chmod-file',
+        'ssrf' => 'pop-ssrf-url',
+        'env' => 'pop-env-value',
+        'var' => 'pop-var-value',
+        'mail' => 'pop-mail-to',
+        'deserialize' => 'pop-serialized',
     ];
 
     /** 没有给选项时，按 sink 分类给一个合适的默认值。 */
@@ -384,17 +384,17 @@ Options:
                        --entry=all enables every magic method
   --class=Entry        Only keep chains whose entry class matches
   --sink=system        Only keep chains hitting the given sink
-  --cmd=value          Value for RCE sinks (default: id)
-  --read-file=path     Value for file read / include sinks (default: /etc/passwd)
-  --write-file=path    Value for file write sinks (default: /tmp/popchain.txt)
-  --delete-file=path   Value for file delete sinks (default: /tmp/popchain.txt)
-  --move-file=path     Value for file move / copy sinks (default: /tmp/popchain.txt)
-  --chmod-file=path    Value for chmod sinks (default: /tmp/popchain.txt)
-  --ssrf-url=url       Value for SSRF sinks such as simplexml_load_file / get_headers (default: http://127.0.0.1/)
-  --env-value=text     Value for putenv sinks (default: POPCHAIN=1)
-  --var-value=text     Value for parse_str sinks (default: popchain=1)
-  --mail-to=address    Value for mail sinks (default: a@b.test)
-  --serialized=data    Value for unserialize sinks (default: a:0:{})
+  --pop-cmd=value          Value for RCE sinks (default: id)
+  --pop-read-file=path     Value for file read / include sinks (default: /etc/passwd)
+  --pop-write-file=path    Value for file write sinks (default: /tmp/popchain.txt)
+  --pop-delete-file=path   Value for file delete sinks (default: /tmp/popchain.txt)
+  --pop-move-file=path     Value for file move / copy sinks (default: /tmp/popchain.txt)
+  --pop-chmod-file=path    Value for chmod sinks (default: /tmp/popchain.txt)
+  --pop-ssrf-url=url       Value for SSRF sinks such as simplexml_load_file / get_headers (default: http://127.0.0.1/)
+  --pop-env-value=text     Value for putenv sinks (default: POPCHAIN=1)
+  --pop-var-value=text     Value for parse_str sinks (default: popchain=1)
+  --pop-mail-to=address    Value for mail sinks (default: a@b.test)
+  --pop-serialized=data    Value for unserialize sinks (default: a:0:{})
   --output=file        Write payloads to a file (JSON in --json mode)
   --max-depth=8        Maximum chain depth
   --max-chains=50      Maximum number of chains
@@ -421,11 +421,11 @@ Options:
 
 Examples:
   popchain scan ./src
-  popchain find ./chal.php --cmd='id'
-  cat chal.php | popchain find --stdin --cmd='id'
-  popchain find --url=https://example.com/chal.php --cmd='id'
-  popchain find ./src --class=Entry --sink=system --cmd='id'
-  popchain find ./src --sink=file_get_contents --read-file=/flag
+  popchain find ./chal.php --pop-cmd='id'
+  cat chal.php | popchain find --stdin --pop-cmd='id'
+  popchain find --url=https://example.com/chal.php --pop-cmd='id'
+  popchain find ./src --class=Entry --sink=system --pop-cmd='id'
+  popchain find ./src --sink=file_get_contents --pop-read-file=/flag
   popchain find ./src --entry=all --output=payloads.txt
   popchain find ./src --lang=zh
 
@@ -455,17 +455,17 @@ php_pop_framework v{$version} — PHP 反序列化 POP 链自动生成器
                        --entry=all 启用全部魔术方法入口
   --class=Entry        只保留指定类（短名或完整命名空间）作为入口的链
   --sink=system        只保留指定 sink 函数的链
-  --cmd=值             命令执行类 sink 的写入值（默认 id）
-  --read-file=路径     文件读取 / 包含类 sink 的写入值（默认 /etc/passwd）
-  --write-file=路径    文件写入类 sink 的写入值（默认 /tmp/popchain.txt）
-  --delete-file=路径   文件删除类 sink 的写入值（默认 /tmp/popchain.txt）
-  --move-file=路径     文件移动 / 复制类 sink 的写入值（默认 /tmp/popchain.txt）
-  --chmod-file=路径    chmod 类 sink 的写入值（默认 /tmp/popchain.txt）
-  --ssrf-url=地址      SSRF 类 sink（simplexml_load_file / get_headers 等）的写入值（默认 http://127.0.0.1/）
-  --env-value=文本     putenv 类 sink 的写入值（默认 POPCHAIN=1）
-  --var-value=文本     parse_str 类 sink 的写入值（默认 popchain=1）
-  --mail-to=地址       mail 类 sink 的写入值（默认 a@b.test）
-  --serialized=数据    unserialize 类 sink 的写入值（默认 a:0:{}）
+  --pop-cmd=值             命令执行类 sink 的写入值（默认 id）
+  --pop-read-file=路径     文件读取 / 包含类 sink 的写入值（默认 /etc/passwd）
+  --pop-write-file=路径    文件写入类 sink 的写入值（默认 /tmp/popchain.txt）
+  --pop-delete-file=路径   文件删除类 sink 的写入值（默认 /tmp/popchain.txt）
+  --pop-move-file=路径     文件移动 / 复制类 sink 的写入值（默认 /tmp/popchain.txt）
+  --pop-chmod-file=路径    chmod 类 sink 的写入值（默认 /tmp/popchain.txt）
+  --pop-ssrf-url=地址      SSRF 类 sink（simplexml_load_file / get_headers 等）的写入值（默认 http://127.0.0.1/）
+  --pop-env-value=文本     putenv 类 sink 的写入值（默认 POPCHAIN=1）
+  --pop-var-value=文本     parse_str 类 sink 的写入值（默认 popchain=1）
+  --pop-mail-to=地址       mail 类 sink 的写入值（默认 a@b.test）
+  --pop-serialized=数据    unserialize 类 sink 的写入值（默认 a:0:{}）
   --output=文件        把 payload 写入文件（JSON 模式写 JSON）
   --max-depth=8        链最大深度
   --max-chains=50      最多输出多少条链
@@ -492,11 +492,11 @@ php_pop_framework v{$version} — PHP 反序列化 POP 链自动生成器
 
 示例:
   popchain scan ./src
-  popchain find ./chal.php --cmd='id'
-  cat chal.php | popchain find --stdin --cmd='id'
-  popchain find --url=https://example.com/chal.php --cmd='id'
-  popchain find ./src --class=Entry --sink=system --cmd='id'
-  popchain find ./src --sink=file_get_contents --read-file=/flag
+  popchain find ./chal.php --pop-cmd='id'
+  cat chal.php | popchain find --stdin --pop-cmd='id'
+  popchain find --url=https://example.com/chal.php --pop-cmd='id'
+  popchain find ./src --class=Entry --sink=system --pop-cmd='id'
+  popchain find ./src --sink=file_get_contents --pop-read-file=/flag
   popchain find ./src --entry=all --output=payloads.txt
   popchain find ./src --lang=zh
 
@@ -711,7 +711,6 @@ TXT;
         $gateGadgets = $gatePossible && !$hasUnserializeCandidate;
         $builder = new PayloadBuilder($classes, (bool) self::option($options, 'obfuscate', false));
         $encode = strtolower((string) self::option($options, 'encode', ''));
-        $legacyValue = self::option($options, 'cmd', null);
 
         $hasPopChains = false;
         $hasTaintedUnserialize = false;
@@ -743,7 +742,7 @@ TXT;
                 }
 
                 $category = $chain->sink?->category;
-                $payloadString = $builder->build($chain, self::valueFor($category, $options, $legacyValue));
+                $payloadString = $builder->build($chain, self::valueFor($category, $options));
                 $notes = $finding->notes;
                 if (!$hasTaintedUnserialize && $gatePossible) {
                     $notes[] = self::t('gadget_unverified');
@@ -1014,11 +1013,11 @@ TXT;
 
     /** 终端展示用：把 payload 里的 NUL 字节转义，避免复制/管道被当二进制。 */
     /**
-     * 按 sink 分类取 payload 值：专用选项 > 兼容的 --cmd > 分类默认值。
+     * 按 sink 分类取 payload 值：--pop-* 专用选项，否则用分类默认值。
      *
      * @param array<string, mixed> $options
      */
-    private static function valueFor(?string $category, array $options, mixed $legacyValue): string
+    private static function valueFor(?string $category, array $options): string
     {
         $optionName = $category !== null ? (self::CATEGORY_OPTIONS[$category] ?? null) : null;
 
@@ -1027,10 +1026,6 @@ TXT;
             if (is_string($specific) && $specific !== '') {
                 return $specific;
             }
-        }
-
-        if (is_string($legacyValue) && $legacyValue !== '') {
-            return $legacyValue;
         }
 
         return self::defaultValue($category);

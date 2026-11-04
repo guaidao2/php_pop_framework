@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-// 各类文件 sink，用于验证 --read-file / --write-file 等选项与默认值
+// 各类文件 sink，用于验证 --pop-read-file / --pop-write-file 等选项与默认值
 class ReadEntry
 {
     public $obj;

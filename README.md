@@ -50,7 +50,7 @@ If none is found, it prints installation instructions and exits.
 ./popchain version
 ./popchain help
 # or
-php popchain find ./src --cmd='id'
+php popchain find ./src --pop-cmd='id'
 ```
 
 CLI output is English by default; append `--lang=zh` (or `--lang zh`) to switch to Chinese.
@@ -63,21 +63,21 @@ After copying a challenge's source from the cloud to your machine, point the too
 
 ```bash
 ./popchain scan ./chal.php
-./popchain find ./chal.php --cmd='id'
+./popchain find ./chal.php --pop-cmd='id'
 ```
 
 ### Standard input (nothing written to disk)
 
 ```bash
-cat chal.php | ./popchain find --stdin --cmd='id'
+cat chal.php | ./popchain find --stdin --pop-cmd='id'
 # or
-./popchain find --stdin --cmd='id' < chal.php
+./popchain find --stdin --pop-cmd='id' < chal.php
 ```
 
 ### Fetching from a URL
 
 ```bash
-./popchain find --url=https://example.com/chal.php --cmd='id'
+./popchain find --url=https://example.com/chal.php --pop-cmd='id'
 ```
 
 The URL may serve raw PHP source. Pages rendered by `highlight_file` / `highlight_string` (common in CTF challenges that show their own source) are recognised: the tool strips the HTML markup, unescapes it, and analyses the recovered source. Other rendered HTML — pages that already ran, login walls, API responses — cannot be converted and the tool reports that the URL is not raw source.
@@ -85,8 +85,8 @@ The URL may serve raw PHP source. Pages rendered by `highlight_file` / `highligh
 ### Directory
 
 ```bash
-./popchain find ./src --sink=system --cmd='id'
-./popchain find ./src --sink=file_get_contents --read-file=/flag
+./popchain find ./src --sink=system --pop-cmd='id'
+./popchain find ./src --sink=file_get_contents --pop-read-file=/flag
 ./popchain find ./src --type=symbolic   # XSS / SQLi / RCE / LFI taint analysis
 ./popchain find ./src --entry=all --output=payloads.txt
 ```
@@ -168,17 +168,17 @@ popchain version
 | `--entry=a,b` | Entry magic methods, `__destruct,__wakeup,__unserialize` by default; `--entry=all` enables every magic method |
 | `--class=Entry` | Keep only chains that enter through the given class (short name or fully qualified namespace) |
 | `--sink=system` | Keep only results that hit the given sink function (applies to both detectors) |
-| `--cmd=value` | Value for command-execution sinks (default `id`) |
-| `--read-file=path` | Value for file-read and `include` sinks (default `/etc/passwd`) |
-| `--write-file=path` | Value for file-write sinks (default `/tmp/popchain.txt`) |
-| `--delete-file=path` | Value for file-delete sinks (default `/tmp/popchain.txt`) |
-| `--move-file=path` | Value for file move / copy sinks (default `/tmp/popchain.txt`) |
-| `--chmod-file=path` | Value for `chmod` sinks (default `/tmp/popchain.txt`) |
-| `--ssrf-url=url` | Value for SSRF sinks such as `simplexml_load_file` / `get_headers` (default `http://127.0.0.1/`) |
-| `--env-value=text` | Value for `putenv` sinks (default `POPCHAIN=1`) |
-| `--var-value=text` | Value for `parse_str` sinks (default `popchain=1`) |
-| `--mail-to=address` | Value for `mail` sinks (default `a@b.test`) |
-| `--serialized=data` | Value for `unserialize` sinks (default `a:0:{}`) |
+| `--pop-cmd=value` | Value for command-execution sinks (default `id`) |
+| `--pop-read-file=path` | Value for file-read and `include` sinks (default `/etc/passwd`) |
+| `--pop-write-file=path` | Value for file-write sinks (default `/tmp/popchain.txt`) |
+| `--pop-delete-file=path` | Value for file-delete sinks (default `/tmp/popchain.txt`) |
+| `--pop-move-file=path` | Value for file move / copy sinks (default `/tmp/popchain.txt`) |
+| `--pop-chmod-file=path` | Value for `chmod` sinks (default `/tmp/popchain.txt`) |
+| `--pop-ssrf-url=url` | Value for SSRF sinks such as `simplexml_load_file` / `get_headers` (default `http://127.0.0.1/`) |
+| `--pop-env-value=text` | Value for `putenv` sinks (default `POPCHAIN=1`) |
+| `--pop-var-value=text` | Value for `parse_str` sinks (default `popchain=1`) |
+| `--pop-mail-to=address` | Value for `mail` sinks (default `a@b.test`) |
+| `--pop-serialized=data` | Value for `unserialize` sinks (default `a:0:{}`) |
 | `--output=file` | Write payloads to a file; in JSON mode, writes JSON |
 | `--max-depth=8` | Maximum chain depth |
 | `--max-chains=50` | Maximum number of chains to output |
