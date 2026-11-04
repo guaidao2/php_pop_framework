@@ -341,6 +341,17 @@ foreach ($execCases as $entry => $marker) {
     check($entry . ' payload 真实执行', str_contains($output, $marker), $built . ' / ' . $output);
 }
 
+echo "== __wakeup 重置属性 ==\n";
+$wakeBlocked = (new ProjectParser())->parsePath(__DIR__ . '/fixtures/wakeup_blocked.php');
+$blockedByEntry = chainsByEntry((new ChainFinder($wakeBlocked, new SinkScanner()))->find());
+check('深层 __wakeup 重置的属性不报链', !isset($blockedByEntry['WakeBlockedApp']));
+
+$wakeOpen = (new ProjectParser())->parsePath(__DIR__ . '/fixtures/wakeup_open.php');
+$openByEntry = chainsByEntry((new ChainFinder($wakeOpen, new SinkScanner()))->find());
+check('没有 __wakeup 的同构链仍然出链', isset($openByEntry['WakeOpenApp']));
+$wakeOpenPayload = (new PayloadBuilder($wakeOpen))->build($openByEntry['WakeOpenApp'], 'echo OPEN_OK');
+check('同构链 payload 写入私有的 filename', str_contains($wakeOpenPayload, "\0WakeOpenCacher\0filename"), $wakeOpenPayload);
+
 echo "== CLI ==\n";
 ob_start();
 $exit = Application::run(['popchain', 'find', __DIR__ . '/../examples/demo.php', '--class=Entry', '--cmd=echo CLI']);
