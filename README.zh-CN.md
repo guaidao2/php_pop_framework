@@ -94,11 +94,25 @@ URL 可以直接是纯 PHP 源码；如果是 `highlight_file` / `highlight_stri
 `find` 输出示例：
 
 ```
-[1] Entry::__destruct → Runner::__invoke → Sink::__invoke
+[1] [CRITICAL] Entry::__destruct -> Runner::__invoke -> Sink::__invoke  (deserialization/rce)
+    examples/demo.php:3
     via call_property  $this->callback       Entry:8
     via callable       $this->fn             Runner:17
-    sink rce      system() 参数 #0 ← $cmd
-    payload: O:5:"Entry":1:{s:8:"callback";O:6:"Runner":2:{...}}
+    sink: system() arg #0 <- $cmd
+    engine: UNKNOWN (1 constraint, 0 skipped)
+    payload: O:5:"Entry":1:{s:8:"callback";O:6:"Runner":2:{s:2:"fn";O:4:"Sink":0:{}s:3:"arg";s:2:"id";}}
+```
+
+`find --type=symbolic` 输出示例（同一套格式，换的是检测器）：
+
+```
+[1] [CRITICAL] OS Command Injection  (symbolic/RCE)
+    examples/symbolic/vuln/rce.php:9
+    taint: $_POST['cmd']
+    path: (strlen($_POST['cmd']) > 0)
+    sink: system()
+    payload: id
+    | system($cmd);
 ```
 
 ## 架构
@@ -125,7 +139,7 @@ CLI（--type）
   └─ 检测器注册表
        ├─ 反序列化检测器
        │    ├─ ChainFinder + 守卫约束
-       │    ├─ [可选] 引擎适配层（进程内 / JSON 进程）
+       │    ├─ 引擎适配层（默认内置求解器）
        │    └─ PayloadBuilder
        └─ 符号执行检测器
             └─ SymPHP 引擎（符号执行 + 污点分析）
@@ -146,7 +160,7 @@ popchain version
 | `--lang=en\|zh` | 输出语言，默认 `en`；`--lang=zh` 切换中文 |
 | `--entry=a,b` | 入口魔术方法，默认 `__destruct,__wakeup,__unserialize`；`--entry=all` 启用全部魔术方法 |
 | `--class=Entry` | 只保留指定类（短名或完整命名空间）作为入口的链 |
-| `--sink=system` | 只保留指定 sink 函数的链 |
+| `--sink=system` | 只保留命中指定 sink 的结果（两个检测器都生效） |
 | `--cmd=值` | 命令执行类 sink 的写入值（默认 `id`） |
 | `--read-file=路径` | 文件读取 / `include` 类 sink 的写入值（默认 `/etc/passwd`） |
 | `--write-file=路径` | 文件写入类 sink 的写入值（默认 `/tmp/popchain.txt`） |
@@ -165,11 +179,18 @@ popchain version
 | `--json` | 以 JSON 输出 |
 | `--obfuscate` | 字符串改用 `S:` 十六进制转义，关键字不会被过滤器看到 |
 | `--encode=url\|base64` | payload 直接编码，方便复制粘贴：`url` 用于 `?data=`，`base64` 便于文本传输；`--output` 也写编码后的形式 |
-| `--type=deserialization` | 要运行的检测类型，见 `--list-types` |
+| `--type=deserialization\|symbolic` | 检测类型：`deserialization`（默认）或 `symbolic`，见 `--list-types` |
 | `--list-types` | 列出可用检测类型后退出 |
 | `--engine=none\|external` | 引擎覆盖：内置进程内求解器默认启用，`none` 关闭，`external` 配合 `--engine-cmd` 使用 |
 | `--engine-cmd=命令` | 外部引擎命令：stdin 收 JSON 请求，stdout 回 JSON 响应 |
 | `--engine-timeout=秒` | 引擎超时时间（默认 10 秒） |
+| `--sym-timeout=秒` | 符号执行时间上限（默认 30 秒） |
+| `--sym-max-paths=N` | 最大路径数（默认 500） |
+| `--sym-max-states=N` | 每个执行点的最大状态数（默认 64） |
+| `--sym-max-depth=N` | 函数内联最大深度（默认 8） |
+| `--sym-max-loop=N` | 循环最大展开次数（默认 3） |
+| `--sym-entry=文件` | 只分析指定入口文件 |
+| `--sym-no-includes` | 不内联 `include` / `require` |
 
 ## 工作原理
 
@@ -181,6 +202,7 @@ PHP 源码（文件 / stdin / URL）
                  ├─ ($this->p)(...)                 → 任意类 __invoke
                  ├─ call_user_func($this->p, ..)    → 任意类 __invoke
                  ├─ call_user_func([$this->p, 'm']) → 方法 m / __call
+                 ├─ call_user_func([$this->p, "do".ucfirst($this->mode)], ..) → 动态方法解析
                  ├─ $this->p->m(...)                → 任意类方法 m / __call
                  ├─ self::m(...) / Foo::m(...)      → 静态方法
                  ├─ $this->p->name                  → 任意类 __get / __isset
@@ -233,13 +255,16 @@ payload 由 `src/Payload/Serializer.php` 直接按 PHP 序列化格式拼接，*
 
 ## 已知限制
 
-静态分析不可能覆盖 PHP 的全部动态特性。当前版本不处理：
+静态分析不可能覆盖 PHP 的全部动态特性。当前限制与启发式边界：
 
 - 反射、`eval` 后生成的动态代码、运行时才确定的 `include` 路径
-- 控制流可达性（`if` 条件、异常路径、循环次数）
+- 异常路径与循环次数不建模
 - `preg_replace_callback`：回调拿到的是匹配数组而不是普通元素，不建立形参映射
 - sink 参数涉及多个不同属性时，只把第一个可控属性写入 payload
-- 靠函数返回值、算术、正则结果或多维数组下标算出来的守卫条件不建模，只处理字面量 / 类型比较
+- 靠函数返回值、算术、正则结果或多维数组下标算出来的守卫条件不建模；求解器覆盖字面量 / 类型比较，其余情况报 `unknown`
+- 动态方法名按公开方法的字面前缀匹配解析；前缀撞车（大量方法同前缀）会多出候选链，需要人工确认；没有静态前缀的方法名不解析
+- 常量 sink 实参只给出可达性链，硬编码操作是否真正有害取决于目标环境
+- 方法形参约束只覆盖 `is_array` / `count` / 元素比较 / `intval` 比较
 - 魔术方法依赖运行时状态（已打开的资源句柄、活动的数据库连接、已加载扩展）的 gadget，仅靠属性注入无法复现
 - 匿名类无法被 `unserialize` 实例化，因此有意跳过而不是建模
 
@@ -258,9 +283,9 @@ php_pop_framework/
 │   ├── Ir/                   # 语句级控制流图
 │   ├── Model/                # 类/方法/属性/调用点/链/边
 │   ├── Detector/             # 检测器插件（反序列化、符号执行）
-│   ├── Engine/               # 可选符号执行引擎适配层
+│   ├── Engine/               # 引擎适配层（内置求解器默认启用）
 │   ├── Analysis/             # sink 识别 + 链搜索
-│   ├── Symbolic/             # 合并的 SymPHP 引擎（SymPHP 命名空间）
+│   ├── Symbolic/             # 合并的 SymPHP 引擎（PopChain\Symbolic 命名空间）
 │   └── Payload/              # 对象图 → 手写序列化
 ├── examples/demo.php         # 示例漏洞代码
 ├── examples/symbolic/vuln/   # SymPHP 示例漏洞代码

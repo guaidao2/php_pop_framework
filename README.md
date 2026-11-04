@@ -94,11 +94,25 @@ The URL may serve raw PHP source. Pages rendered by `highlight_file` / `highligh
 Sample `find` output:
 
 ```
-[1] Entry::__destruct → Runner::__invoke → Sink::__invoke
+[1] [CRITICAL] Entry::__destruct -> Runner::__invoke -> Sink::__invoke  (deserialization/rce)
+    examples/demo.php:3
     via call_property  $this->callback       Entry:8
     via callable       $this->fn             Runner:17
-    sink rce      system() arg #0 ← $cmd
-    payload: O:5:"Entry":1:{s:8:"callback";O:6:"Runner":2:{...}}
+    sink: system() arg #0 <- $cmd
+    engine: UNKNOWN (1 constraint, 0 skipped)
+    payload: O:5:"Entry":1:{s:8:"callback";O:6:"Runner":2:{s:2:"fn";O:4:"Sink":0:{}s:3:"arg";s:2:"id";}}
+```
+
+Sample `find --type=symbolic` output (same format, different detector):
+
+```
+[1] [CRITICAL] OS Command Injection  (symbolic/RCE)
+    examples/symbolic/vuln/rce.php:9
+    taint: $_POST['cmd']
+    path: (strlen($_POST['cmd']) > 0)
+    sink: system()
+    payload: id
+    | system($cmd);
 ```
 
 ## Architecture
@@ -132,7 +146,7 @@ CLI (--type)
   └─ Detector registry
        ├─ deserialization detector
        │    ├─ ChainFinder + guard constraints
-       │    ├─ [optional] engine adapter (in-process or JSON process)
+       │    ├─ engine adapter (built-in solver by default)
        │    └─ PayloadBuilder
        └─ symbolic detector
             └─ SymPHP engine (symbolic execution + taint analysis)
@@ -153,7 +167,7 @@ popchain version
 | `--lang=en\|zh` | Output language, `en` by default; `--lang=zh` switches to Chinese |
 | `--entry=a,b` | Entry magic methods, `__destruct,__wakeup,__unserialize` by default; `--entry=all` enables every magic method |
 | `--class=Entry` | Keep only chains that enter through the given class (short name or fully qualified namespace) |
-| `--sink=system` | Keep only chains that reach the given sink function |
+| `--sink=system` | Keep only results that hit the given sink function (applies to both detectors) |
 | `--cmd=value` | Value for command-execution sinks (default `id`) |
 | `--read-file=path` | Value for file-read and `include` sinks (default `/etc/passwd`) |
 | `--write-file=path` | Value for file-write sinks (default `/tmp/popchain.txt`) |
@@ -172,11 +186,18 @@ popchain version
 | `--json` | Emit JSON |
 | `--obfuscate` | Write strings as `S:` hex escapes so keyword filters do not see them |
 | `--encode=url\|base64` | Encode the payload for direct copy/paste: `url` for a `?data=` query, `base64` for log-safe text; `--output` writes the encoded form too |
-| `--type=deserialization` | Detection type to run, see `--list-types` |
+| `--type=deserialization\|symbolic` | Detection type to run: `deserialization` (default) or `symbolic`; see `--list-types` |
 | `--list-types` | List available detection types and exit |
 | `--engine=none\|external` | Engine override: the built-in in-process solver is used by default, `none` disables it, `external` uses `--engine-cmd` |
 | `--engine-cmd=cmd` | External engine command: JSON request on stdin, JSON response on stdout |
 | `--engine-timeout=sec` | Engine timeout in seconds (default 10) |
+| `--sym-timeout=sec` | Symbolic engine time limit in seconds (default 30) |
+| `--sym-max-paths=N` | Symbolic engine max explored paths (default 500) |
+| `--sym-max-states=N` | Max states per execution point (default 64) |
+| `--sym-max-depth=N` | Max inlined call depth (default 8) |
+| `--sym-max-loop=N` | Max loop unroll count (default 3) |
+| `--sym-entry=file` | Only analyze this entry file with the symbolic engine |
+| `--sym-no-includes` | Do not inline `include` / `require` in the symbolic engine |
 
 ## How it works
 
@@ -188,6 +209,7 @@ PHP source (file / stdin / URL)
                  ├─ ($this->p)(...)               → any class __invoke
                  ├─ call_user_func($this->p, ..)  → any class __invoke
                  ├─ call_user_func([$this->p, 'm']) → method m / __call
+                 ├─ call_user_func([$this->p, "do".ucfirst($this->mode)], ..) → dynamic method resolution
                  ├─ $this->p->m(...)              → any class method m / __call
                  ├─ self::m(...) / Foo::m(...)    → static method
                  ├─ $this->p->name                → any class __get / __isset
@@ -240,13 +262,16 @@ The payload is assembled straight into PHP's serialization format by `src/Payloa
 
 ## Known limitations
 
-Static analysis cannot cover every dynamic feature PHP offers. The current version does not handle:
+Static analysis cannot cover every dynamic feature PHP offers. Current limits and heuristics:
 
 - Reflection, code generated after `eval`, and `include` paths resolved at runtime
-- Control-flow reachability (`if` conditions, exception paths, loop counts)
+- Exception paths and loop counts are not modelled
 - `preg_replace_callback`: the callback receives a matches array rather than plain elements, so parameters are not mapped
 - Sink arguments that combine several different properties: only the first controllable property is written into the payload
-- Guard conditions computed from function return values, arithmetic, regex results or nested array access are not solved; only literal/type comparisons are modelled
+- Guard conditions computed from function return values, arithmetic, regex results or nested array access are not solved; the solver covers literal/type comparisons and reports `unknown` for the rest
+- Dynamic method names are resolved by literal-prefix matching over public methods; collisions (many methods sharing the prefix) can add candidate chains that need manual confirmation, and names with no static prefix are not resolved
+- Fixed literal sink arguments produce reachability chains only; whether the hardcoded operation is actually harmful depends on the target
+- Method parameter constraints only cover `is_array` / `count` / element comparisons / `intval`-style comparisons
 - Gadgets whose magic methods depend on runtime-created state (open handles, live database connections, loaded extensions) cannot be reproduced by property injection alone
 - Anonymous classes cannot be instantiated by `unserialize`, so they are intentionally skipped rather than modelled
 
@@ -265,9 +290,9 @@ php_pop_framework/
 │   ├── Ir/                   # statement-level control-flow graph
 │   ├── Model/                # classes/methods/properties/call sites/chains/edges
 │   ├── Detector/             # detector plugins (deserialization, symbolic)
-│   ├── Engine/               # optional symbolic-execution engine adapter
+│   ├── Engine/               # engine adapter (built-in solver enabled by default)
 │   ├── Analysis/             # sink detection + chain search
-│   ├── Symbolic/             # merged SymPHP engine (SymPHP namespace)
+│   ├── Symbolic/             # merged SymPHP engine (PopChain\Symbolic namespace)
 │   └── Payload/              # object graph → hand-written serialization
 ├── examples/demo.php         # sample vulnerable code
 ├── examples/symbolic/vuln/   # SymPHP sample vulnerable code
