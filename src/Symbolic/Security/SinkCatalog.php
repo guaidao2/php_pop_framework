@@ -114,7 +114,7 @@ final class SinkCatalog
         }
 
         // 文件写入 / 删除
-        foreach (['file_put_contents' => [0], 'unlink' => [0], 'rename' => [], 'copy' => [], 'mkdir' => [0], 'rmdir' => [0], 'chmod' => [0], 'chown' => [0], 'move_uploaded_file' => []] as $name => $indexes) {
+        foreach (['file_put_contents' => [0], 'unlink' => [0], 'rename' => [1], 'copy' => [1], 'mkdir' => [0], 'rmdir' => [0], 'chmod' => [0], 'chown' => [0], 'move_uploaded_file' => [1]] as $name => $indexes) {
             $add(new Sink($name, 'PATH_TRAVERSAL', 'high', 'Path Traversal / Arbitrary File Write', $indexes, '../../../../tmp/pwned'));
         }
 
@@ -123,10 +123,9 @@ final class SinkCatalog
             $add(new Sink($name, 'XXE', 'high', 'XML External Entity', [0], '<!DOCTYPE x [<!ENTITY e SYSTEM "file:///etc/passwd">]><x>&e;</x>'));
         }
 
-        // 响应头注入
-        foreach (['header', 'setcookie', 'setrawcookie', 'mail'] as $name) {
-            $add(new Sink($name, 'HEADER', 'medium', 'Header Injection', [], '%0d%0aSet-Cookie: pwned=1'));
-        }
+        // 响应头注入：PHP 5.1.2 起 header()/setcookie() 会拒绝含 CRLF 的值；
+        // mail() 的第 4 个参数（下标 3，additional_headers）才是头注入位，下标 4 是 sendmail 参数。
+        $add(new Sink('mail', 'HEADER', 'medium', 'Header Injection', [0, 1, 3], '%0d%0aSet-Cookie: pwned=1'));
 
         self::$sinks = $sinks;
     }

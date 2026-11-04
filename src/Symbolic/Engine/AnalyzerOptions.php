@@ -10,10 +10,10 @@ namespace PopChain\Symbolic\Engine;
 final class AnalyzerOptions
 {
     public function __construct(
-        public readonly int $maxStates = 64,
+        public readonly int $maxStates = 128,
         public readonly int $maxCallDepth = 8,
         public readonly int $maxLoopIterations = 3,
-        public readonly int $maxPaths = 500,
+        public readonly int $maxPaths = 2000,
         public readonly float $timeout = 30.0,
         public readonly bool $followIncludes = true,
         public readonly bool $argvAsSource = true,
@@ -29,10 +29,10 @@ final class AnalyzerOptions
     public static function fromArray(array $options): self
     {
         return new self(
-            maxStates: (int) ($options['maxStates'] ?? 64),
+            maxStates: (int) ($options['maxStates'] ?? 128),
             maxCallDepth: (int) ($options['maxCallDepth'] ?? 8),
             maxLoopIterations: (int) ($options['maxLoopIterations'] ?? 3),
-            maxPaths: (int) ($options['maxPaths'] ?? 500),
+            maxPaths: (int) ($options['maxPaths'] ?? 2000),
             timeout: (float) ($options['timeout'] ?? 30.0),
             followIncludes: (bool) ($options['followIncludes'] ?? true),
             argvAsSource: (bool) ($options['argvAsSource'] ?? true),

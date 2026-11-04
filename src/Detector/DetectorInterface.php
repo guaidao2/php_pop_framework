@@ -25,4 +25,7 @@ interface DetectorInterface
      * @return list<Finding>
      */
     public function detect(array $classes, array $options = []): array;
+
+    /** @return list<string> 本次检测的告警（预算截断、解析失败等） */
+    public function warnings(): array;
 }

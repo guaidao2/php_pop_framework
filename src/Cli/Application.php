@@ -17,7 +17,7 @@ use PopChain\Payload\PayloadBuilder;
  */
 final class Application
 {
-    public const VERSION = '2.8.0';
+    public const VERSION = '2.8.3';
 
     private const DEFAULT_ENTRIES = ['__destruct', '__wakeup', '__unserialize'];
 
@@ -92,6 +92,7 @@ final class Application
             'available_types' => 'Available detection types:',
             'all_types' => '(default) run every detector',
             'no_findings' => 'No findings.',
+            'no_pop_chain' => 'no POP chain in the scanned code (check autoloaded or loaded classes)',
             'unknown_type' => 'Unknown detection type: {type}. Available: {types}',
             'engine_infeasible' => 'engine marked chain as infeasible, skipped: {entry}',
             'engine_unavailable' => 'engine is not available, falling back to heuristics: {engine}',
@@ -126,6 +127,7 @@ final class Application
             'available_types' => '可用的检测类型:',
             'all_types' => '（默认）运行所有检测器',
             'no_findings' => '没有发现。',
+            'no_pop_chain' => '扫描范围内没有可用 POP 链（注意 autoload 或运行时加载的类）',
             'unknown_type' => '未知检测类型: {type}，可用: {types}',
             'engine_infeasible' => '引擎判定链不可行，已跳过: {entry}',
             'engine_unavailable' => '引擎不可用，回退到启发式: {engine}',
@@ -405,8 +407,8 @@ Options:
   --engine-cmd=cmd     External engine command: JSON request on stdin, JSON response on stdout
   --engine-timeout=sec Engine timeout in seconds (default: 10)
   --sym-timeout=sec    Symbolic engine time limit in seconds (default: 30)
-  --sym-max-paths=N    Symbolic engine max explored paths (default: 500)
-  --sym-max-states=N   Max states per execution point (default: 64)
+  --sym-max-paths=N    Symbolic engine max explored paths (default: 2000)
+  --sym-max-states=N   Max states per execution point (default: 128)
   --sym-max-depth=N    Max inlined call depth (default: 8)
   --sym-max-loop=N     Max loop unroll count (default: 3)
   --sym-entry=file     Only analyze this entry file with the symbolic engine
@@ -475,8 +477,8 @@ php_pop_framework v{$version} — PHP 反序列化 POP 链自动生成器
   --engine-cmd=命令    外部引擎命令：stdin 收 JSON 请求，stdout 回 JSON 响应
   --engine-timeout=秒  引擎超时时间（默认 10 秒）
   --sym-timeout=秒      符号执行时间上限（默认 30 秒）
-  --sym-max-paths=N     最大路径数（默认 500）
-  --sym-max-states=N    每个执行点的最大状态数（默认 64）
+  --sym-max-paths=N     最大路径数（默认 2000）
+  --sym-max-states=N    每个执行点的最大状态数（默认 128）
   --sym-max-depth=N     函数内联最大深度（默认 8）
   --sym-max-loop=N      循环最大展开次数（默认 3）
   --sym-entry=文件      只分析指定入口文件
@@ -669,8 +671,8 @@ TXT;
             'max_depth' => (int) self::option($options, 'max-depth', 8),
             'max_chains' => (int) self::option($options, 'max-chains', 50),
             'sym_timeout' => (float) self::option($options, 'sym-timeout', 30),
-            'sym_max_paths' => (int) self::option($options, 'sym-max-paths', 500),
-            'sym_max_states' => (int) self::option($options, 'sym-max-states', 64),
+            'sym_max_paths' => (int) self::option($options, 'sym-max-paths', 2000),
+            'sym_max_states' => (int) self::option($options, 'sym-max-states', 128),
             'sym_max_depth' => (int) self::option($options, 'sym-max-depth', 8),
             'sym_max_loop' => (int) self::option($options, 'sym-max-loop', 3),
             'sym_entry' => self::option($options, 'sym-entry', null),
@@ -685,6 +687,9 @@ TXT;
             foreach ($detector->detect($classes, $detectorOptions) as $finding) {
                 $findings[] = $finding;
             }
+            foreach ($detector->warnings() as $detectorWarning) {
+                $warnings[] = $detectorWarning;
+            }
         }
 
         $classFilter = self::option($options, 'class');
@@ -692,6 +697,13 @@ TXT;
         $builder = new PayloadBuilder($classes, (bool) self::option($options, 'obfuscate', false));
         $encode = strtolower((string) self::option($options, 'encode', ''));
         $legacyValue = self::option($options, 'cmd', null);
+
+        $hasPopChains = false;
+        foreach ($findings as $finding) {
+            if ($finding->chain !== null && $finding->feasible) {
+                $hasPopChains = true;
+            }
+        }
 
         $records = [];
         foreach ($findings as $finding) {
@@ -762,6 +774,11 @@ TXT;
                 continue;
             }
 
+            $symbolicNotes = $finding->notes;
+            if (!$hasPopChains && strtoupper((string) $finding->category) === 'OBJECT_INJECTION') {
+                $symbolicNotes[] = self::t('no_pop_chain');
+            }
+
             $records[] = [
                 'type' => 'symbolic',
                 'severity' => $finding->severity,
@@ -776,7 +793,7 @@ TXT;
                 'path' => $finding->path,
                 'payload' => $finding->payload,
                 'payload_encoded' => self::encodePayload($finding->payload, $encode),
-                'notes' => $finding->notes,
+                'notes' => $symbolicNotes,
                 'snippet' => $finding->snippet,
             ];
         }
@@ -820,6 +837,9 @@ TXT;
         echo "\n";
 
         if ($records === []) {
+            foreach ($warnings as $warning) {
+                echo '[warn] ', $warning, "\n";
+            }
             if ($type !== 'symbolic') {
                 echo self::t('no_chains'), "\n";
                 echo self::t('try_entries'), "\n";

@@ -55,6 +55,9 @@ final class ChainFinder
     private int $maxDepth = 8;
     private int $maxChains = 50;
 
+    /** 是否因为 maxChains 提前停止搜索（结果可能不完整）。 */
+    public bool $truncated = false;
+
     /** @param array<string, ClassInfo> $classes */
     public function __construct(
         private array $classes,
@@ -73,6 +76,7 @@ final class ChainFinder
     ): array {
         $this->chains = [];
         $this->seen = [];
+        $this->truncated = false;
         $this->maxDepth = $maxDepth;
         $this->maxChains = $maxChains;
 
@@ -108,6 +112,7 @@ final class ChainFinder
         int $depth,
     ): void {
         if (count($this->chains) >= $this->maxChains) {
+            $this->truncated = true;
             return;
         }
 
@@ -134,6 +139,7 @@ final class ChainFinder
             $this->seen[$signature] = true;
             $this->chains[] = $chain;
             if (count($this->chains) >= $this->maxChains) {
+                $this->truncated = true;
                 return;
             }
         }

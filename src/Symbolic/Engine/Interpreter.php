@@ -7,8 +7,11 @@ namespace PopChain\Symbolic\Engine;
 use PhpParser\Node;
 use PhpParser\Node\Expr as PExpr;
 use PhpParser\Node\Stmt as PStmt;
+use PopChain\Symbolic\Expr\BinaryExpr;
+use PopChain\Symbolic\Expr\CallExpr;
 use PopChain\Symbolic\Expr\Expr;
 use PopChain\Symbolic\Expr\Simplifier;
+use PopChain\Symbolic\Expr\UnaryExpr;
 use PopChain\Symbolic\Expr\VarExpr;
 use PopChain\Symbolic\Security\Finding;
 use PopChain\Symbolic\Security\FindingCollector;
@@ -2581,10 +2584,14 @@ final class Interpreter
 
         $sources = [];
         foreach ($candidates as $value) {
-            if ($value->taint->isTaintedFor($sink->category)) {
-                foreach ($value->taint->describe() as $description) {
-                    $sources[] = $description;
-                }
+            if (!$value->taint->isTaintedFor($sink->category)) {
+                continue;
+            }
+            if ($this->isPathCategory($sink->category) && $this->isConfinedByRealpath($value, $state)) {
+                continue;
+            }
+            foreach ($value->taint->describe() as $description) {
+                $sources[] = $description;
             }
         }
 
@@ -2609,6 +2616,200 @@ final class Interpreter
             $sink->payload ?? '',
             $this->snippet($state->file, $node->getStartLine()),
         ));
+    }
+
+    private function isPathCategory(string $category): bool
+    {
+        // XXE 不在这里：realpath 只说明读的是哪个文件，不能阻止 XML 实体展开
+        return in_array($category, ['SSRF', 'LFI', 'PATH_TRAVERSAL'], true);
+    }
+
+    /**
+     * realpath 包含性守卫：
+     *   $real = realpath($path);
+     *   $base = realpath('/固定目录');
+     *   if ($real === false || $base === false || strpos($real . '/', $base . '/') !== 0) exit;
+     *
+     * 认两种形状：
+     *   - 取反的退出守卫：约束是 !( ... strpos(...) !== 0 ... )，且该比较是顶层析取项
+     *   - 顶层正向：约束恰好是 strpos(realpath($x) . '/', realpath(常量) . '/') === 0
+     *
+     * 根值不能含变量、不能是 /、. 等无约束值；取反形式不接受 && / and / xor
+     * 合取，避免守卫只在部分条件下生效时被误判为收口。
+     */
+    private function isConfinedByRealpath(Value $value, State $state): bool
+    {
+        $canonical = $value->toExpr()->canonical();
+        foreach ($state->constraints as $constraint) {
+            if ($this->matchesContainmentConstraint($constraint, $canonical)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /** 一次 realpath 包含性约束的结构化判定。 */
+    private function matchesContainmentConstraint(Expr $constraint, string $canonical): bool
+    {
+        // 顶层正向：strpos(realpath($x) . '/', realpath(常量) . '/') === 0（支持 Yoda 写法）
+        if ($constraint instanceof BinaryExpr
+            && $this->isContainmentComparison($constraint, '===', $canonical)) {
+            return true;
+        }
+
+        // 正向事实在合取里：每个合取项都成立，因此里面出现包含性比较就是安全分支
+        if ($constraint instanceof BinaryExpr && in_array($constraint->op, ['&&', 'and'], true)) {
+            foreach ($this->flattenConjunction($constraint) as $conjunct) {
+                if ($conjunct instanceof BinaryExpr
+                    && $this->isContainmentComparison($conjunct, '===', $canonical)) {
+                    return true;
+                }
+            }
+        }
+
+        // 取反的退出守卫：operand 必须是析取，且某个顶层析取项是 strpos(...) !== 0。
+        // && / and / xor / 任意包装都不满足这个结构，自动被排除。
+        if ($constraint instanceof UnaryExpr && $constraint->op === '!') {
+            if (!$this->containsDisjunction($constraint->operand)) {
+                return false;
+            }
+            foreach ($this->flattenDisjunction($constraint->operand) as $disjunct) {
+                if ($disjunct instanceof BinaryExpr
+                    && $this->isContainmentComparison($disjunct, '!==', $canonical)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /** 比较的一侧是 0，另一侧是包含性 strpos；支持 Yoda 写法。 */
+    private function isContainmentComparison(BinaryExpr $comparison, string $operator, string $canonical): bool
+    {
+        if ($comparison->op !== $operator) {
+            return false;
+        }
+        if ($this->isZeroConstant($comparison->right)) {
+            return $this->isContainmentStrpos($comparison->left, $canonical);
+        }
+        if ($this->isZeroConstant($comparison->left)) {
+            return $this->isContainmentStrpos($comparison->right, $canonical);
+        }
+
+        return false;
+    }
+
+    /** @return list<Expr> */
+    private function flattenConjunction(Expr $expr): array
+    {
+        if ($expr instanceof BinaryExpr && in_array($expr->op, ['&&', 'and'], true)) {
+            return array_merge(
+                $this->flattenConjunction($expr->left),
+                $this->flattenConjunction($expr->right),
+            );
+        }
+
+        return [$expr];
+    }
+
+    private function isZeroConstant(Expr $expr): bool
+    {
+        return $expr->isConstant() && $expr->constantValue() === 0;
+    }
+
+    private function containsDisjunction(Expr $expr): bool
+    {
+        if ($expr instanceof BinaryExpr && in_array($expr->op, ['||', 'or'], true)) {
+            return true;
+        }
+        foreach ($expr->children() as $child) {
+            if ($this->containsDisjunction($child)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /** @return list<Expr> */
+    private function flattenDisjunction(Expr $expr): array
+    {
+        if ($expr instanceof BinaryExpr && in_array($expr->op, ['||', 'or'], true)) {
+            return array_merge(
+                $this->flattenDisjunction($expr->left),
+                $this->flattenDisjunction($expr->right),
+            );
+        }
+
+        return [$expr];
+    }
+
+    private function isContainmentStrpos(Expr $expr, string $canonical): bool
+    {
+        if (!$expr instanceof CallExpr || strtolower($expr->name) !== 'strpos' || count($expr->args) < 2) {
+            return false;
+        }
+
+        return $this->isRealpathSlashConcat($expr->args[0], $canonical)
+            && $this->isRealpathSlashConcatBase($expr->args[1]);
+    }
+
+    private function isRealpathSlashConcat(Expr $expr, string $canonical): bool
+    {
+        // 裸 realpath(表达式)：蕴含 realpath($x) 以 base . '/' 开头
+        if ($expr instanceof CallExpr
+            && strtolower($expr->name) === 'realpath'
+            && count($expr->args) >= 1
+            && $expr->args[0]->canonical() === $canonical) {
+            return true;
+        }
+
+        if (!$expr instanceof BinaryExpr || $expr->op !== '.') {
+            return false;
+        }
+        if (!$this->isSlashConstant($expr->right)) {
+            return false;
+        }
+        $left = $expr->left;
+        if (!$left instanceof CallExpr || strtolower($left->name) !== 'realpath' || count($left->args) < 1) {
+            return false;
+        }
+
+        return $left->args[0]->canonical() === $canonical;
+    }
+
+    private function isRealpathSlashConcatBase(Expr $expr): bool
+    {
+        if (!$expr instanceof BinaryExpr || $expr->op !== '.') {
+            return false;
+        }
+        if (!$this->isSlashConstant($expr->right)) {
+            return false;
+        }
+        $left = $expr->left;
+        if (!$left instanceof CallExpr || strtolower($left->name) !== 'realpath' || count($left->args) < 1) {
+            return false;
+        }
+        $base = $left->args[0];
+        if ($base->variables() !== []) {
+            // attacker 可控的 base 不能自证清白
+            return false;
+        }
+        if ($base->isConstant()) {
+            $value = $base->constantValue();
+            if (!is_string($value) || in_array($value, ['', '/', '.', './', '//'], true)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private function isSlashConstant(Expr $expr): bool
+    {
+        return $expr->isConstant() && $expr->constantValue() === '/';
     }
 
     private function sinkDisplayName(string $name, Sink $sink): string

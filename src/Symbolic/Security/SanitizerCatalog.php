@@ -34,8 +34,10 @@ final class SanitizerCatalog
         'escapeshellcmd' => ['RCE'],
         'basename' => ['LFI', 'PATH_TRAVERSAL'],
         'preg_quote' => ['REGEX'],
-        'urlencode' => ['HEADER'],
-        'rawurlencode' => ['HEADER'],
+        // urlencode / rawurlencode 会把引号、尖括号等百分号编码，HTML 属性/文本上下文无法逃逸
+        'urlencode' => ['HEADER', 'XSS'],
+        'rawurlencode' => ['HEADER', 'XSS'],
+        'realpath' => ['SSRF'],
     ];
 
     /**

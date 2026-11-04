@@ -42,7 +42,7 @@ final class Builtins
         'mysql_real_escape_string' => Type::String, 'pg_escape_string' => Type::String,
         'pg_escape_literal' => Type::String, 'sqlite_escape_string' => Type::String,
         'escapeshellarg' => Type::String, 'escapeshellcmd' => Type::String,
-        'basename' => Type::String, 'dirname' => Type::String,
+        'basename' => Type::String, 'dirname' => Type::String, 'realpath' => Type::String, 'readlink' => Type::String,
         'sprintf' => Type::String, 'vsprintf' => Type::String,
         'implode' => Type::String, 'join' => Type::String, 'strval' => Type::String,
         'number_format' => Type::String, 'base64_encode' => Type::String,
@@ -220,6 +220,13 @@ final class Builtins
                     $this->taintOf($args)->unsanitizeFor(['XSS']),
                 );
 
+            case 'urldecode':
+            case 'rawurldecode':
+                return new ScalarValue(
+                    Expr::call($name, $this->exprArgs($args), Type::String),
+                    $this->taintOf($args)->unsanitizeFor(['XSS', 'HEADER']),
+                );
+
             case 'compact':
             case 'array_pop':
             case 'array_shift':
@@ -244,6 +251,10 @@ final class Builtins
         }
 
         $taint = $this->taintOf($args);
+        if (in_array($lower, ['str_replace', 'str_ireplace'], true) && $this->replacesPathSeparators($args)) {
+            // 删除 /、\ 或 NUL 等价于切断路径穿越
+            $taint = $taint->sanitizeFor(['PATH_TRAVERSAL']);
+        }
         $categories = SanitizerCatalog::categoriesFor($lower);
         if ($categories !== []) {
             $taint = $taint->sanitizeFor($categories);
@@ -348,6 +359,77 @@ final class Builtins
         }
 
         return $taint;
+    }
+
+    /**
+     * str_replace/str_ireplace 的查找串是否包含路径分隔符或 NUL。
+     *
+     * @param list<Value> $args
+     */
+    private function replacesPathSeparators(array $args): bool
+    {
+        $search = $args[0] ?? null;
+        $replace = $args[1] ?? null;
+        if ($search === null || $replace === null) {
+            return false;
+        }
+
+        $replacements = [];
+        if ($replace instanceof ArrayValue) {
+            foreach ($replace->items() as $item) {
+                $value = $this->constantString($item);
+                if ($value !== null) {
+                    $replacements[] = $value;
+                }
+            }
+        } else {
+            $value = $this->constantString($replace);
+            if ($value !== null) {
+                $replacements[] = $value;
+            }
+        }
+        if ($replacements === []) {
+            return false;
+        }
+        foreach ($replacements as $replacement) {
+            // 只有替换成空串才是删除分隔符
+            if ($replacement !== '') {
+                return false;
+            }
+        }
+
+        $values = [];
+        if ($search instanceof ArrayValue) {
+            foreach ($search->items() as $item) {
+                $value = $this->constantString($item);
+                if ($value !== null) {
+                    $values[] = $value;
+                }
+            }
+        } else {
+            $value = $this->constantString($search);
+            if ($value !== null) {
+                $values[] = $value;
+            }
+        }
+
+        $hasSlash = false;
+        $hasBackslash = false;
+        foreach ($values as $value) {
+            // 只接受逐字符删除分隔符；str_replace('../', '', $x) 这种多字符替换不算
+            if (!in_array($value, ['/', "\\", "\0"], true)) {
+                return false;
+            }
+            if ($value === '/') {
+                $hasSlash = true;
+            }
+            if ($value === "\\") {
+                $hasBackslash = true;
+            }
+        }
+
+        // 同时删除两种路径分隔符，才能跨平台切断路径穿越
+        return $hasSlash && $hasBackslash;
     }
 
     private function constantString(?Value $value): ?string

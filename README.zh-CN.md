@@ -187,8 +187,8 @@ popchain version
 | `--engine-cmd=命令` | 外部引擎命令：stdin 收 JSON 请求，stdout 回 JSON 响应 |
 | `--engine-timeout=秒` | 引擎超时时间（默认 10 秒） |
 | `--sym-timeout=秒` | 符号执行时间上限（默认 30 秒） |
-| `--sym-max-paths=N` | 最大路径数（默认 500） |
-| `--sym-max-states=N` | 每个执行点的最大状态数（默认 64） |
+| `--sym-max-paths=N` | 最大路径数（默认 2000） |
+| `--sym-max-states=N` | 每个执行点的最大状态数（默认 128） |
 | `--sym-max-depth=N` | 函数内联最大深度（默认 8） |
 | `--sym-max-loop=N` | 循环最大展开次数（默认 3） |
 | `--sym-entry=文件` | 只分析指定入口文件 |
@@ -267,6 +267,9 @@ payload 由 `src/Payload/Serializer.php` 直接按 PHP 序列化格式拼接，*
 - 动态方法名按公开方法的字面前缀匹配解析；前缀撞车（大量方法同前缀）会多出候选链，需要人工确认；没有静态前缀的方法名不解析
 - 常量 sink 实参只给出可达性链，硬编码操作是否真正有害取决于目标环境
 - 方法形参约束只覆盖 `is_array` / `count` / 元素比较 / `intval` 比较
+- 符号执行受路径/状态预算限制；大项目触顶时 CLI 会打印截断告警（加大 `--sym-max-paths` / `--sym-max-states` 可继续深入）
+- 识别 `realpath()` 包含性守卫：`$real = realpath($path); $base = realpath('/固定目录'); if ($real === false || $base === false || strpos($real . '/', $base . '/') !== 0) exit;` 会抑制被限制在目录内的文件读取；弱前缀（根目录侧没补分隔符、base 为 `/`、base 是变量、方向写反、守卫不终止）仍会报告
+- 现代 PHP 的 `header()` / `setcookie()` 会拒绝含 CRLF 的值，响应头注入只对 `mail()` 报告；`realpath()` 的结果按本地路径处理，不再当作 SSRF 源；`str_replace` 同时删除两种路径分隔符后才清除路径穿越污点
 - 魔术方法依赖运行时状态（已打开的资源句柄、活动的数据库连接、已加载扩展）的 gadget，仅靠属性注入无法复现
 - 匿名类无法被 `unserialize` 实例化，因此有意跳过而不是建模
 

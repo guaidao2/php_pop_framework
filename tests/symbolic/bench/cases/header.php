@@ -1,3 +1,3 @@
 <?php
-// EXPECT: HEADER
+// EXPECT: none
 header('Location: ' . $_GET['u']);

@@ -93,8 +93,8 @@ composer install
 
 ```
 --sym-timeout=SECONDS     分析时间上限（默认 30）
---sym-max-paths=N         最大路径数（默认 500）
---sym-max-states=N        每个执行点的最大状态数（默认 64）
+--sym-max-paths=N         最大路径数（默认 2000）
+--sym-max-states=N        每个执行点的最大状态数（默认 128）
 --sym-max-depth=N         函数内联最大深度（默认 8）
 --sym-max-loop=N          循环最大展开次数（默认 3）
 --sym-entry=FILE          只分析指定入口文件（其余文件仅用于索引）
@@ -116,7 +116,7 @@ composer install
 | `SSRF` | `file_get_contents`、`readfile`、`fopen`、`curl_init`、`fsockopen` |
 | `XXE` | `simplexml_load_string`、`simplexml_load_file`、`DOMDocument::loadXML` |
 | `OBJECT_INJECTION` | `unserialize` |
-| `HEADER` | `header`、`setcookie`、`mail` |
+| `HEADER` | `mail`（`header` / `setcookie` 会拒绝 CRLF，不报告） |
 
 ## 测试
 

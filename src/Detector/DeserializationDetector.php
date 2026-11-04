@@ -32,6 +32,15 @@ final class DeserializationDetector implements DetectorInterface
         return 'deserialization';
     }
 
+    /** @var list<string> */
+    private array $warnings = [];
+
+    /** @return list<string> */
+    public function warnings(): array
+    {
+        return $this->warnings;
+    }
+
     public function description(): string
     {
         return 'PHP object injection / POP chain detection';
@@ -44,8 +53,15 @@ final class DeserializationDetector implements DetectorInterface
         $maxDepth = (int) ($options['max_depth'] ?? 8);
         $maxChains = (int) ($options['max_chains'] ?? 50);
 
+        $this->warnings = [];
         $finder = new ChainFinder($classes, $this->scanner);
         $chains = $finder->find($entries, $maxDepth, $maxChains);
+        if ($finder->truncated) {
+            $this->warnings[] = sprintf(
+                'chain search hit max-chains (%d); results may be incomplete (increase --max-chains)',
+                $maxChains,
+            );
+        }
 
         $findings = [];
         foreach ($chains as $chain) {

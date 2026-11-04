@@ -16,6 +16,15 @@ use PopChain\Symbolic\Engine\AnalyzerOptions;
  */
 final class SymbolicDetector implements DetectorInterface
 {
+    /** @var list<string> */
+    private array $warnings = [];
+
+    /** @return list<string> */
+    public function warnings(): array
+    {
+        return $this->warnings;
+    }
+
     public function name(): string
     {
         return 'symbolic';
@@ -32,8 +41,8 @@ final class SymbolicDetector implements DetectorInterface
         $path = (string) ($options['path'] ?? '.');
         $analyzerOptions = AnalyzerOptions::fromArray([
             'timeout' => (float) ($options['sym_timeout'] ?? 30.0),
-            'maxPaths' => (int) ($options['sym_max_paths'] ?? 500),
-            'maxStates' => (int) ($options['sym_max_states'] ?? 64),
+            'maxPaths' => (int) ($options['sym_max_paths'] ?? 2000),
+            'maxStates' => (int) ($options['sym_max_states'] ?? 128),
             'maxCallDepth' => (int) ($options['sym_max_depth'] ?? 8),
             'maxLoopIterations' => (int) ($options['sym_max_loop'] ?? 3),
             'followIncludes' => (bool) ($options['sym_follow_includes'] ?? true),
@@ -44,6 +53,14 @@ final class SymbolicDetector implements DetectorInterface
             : null;
 
         $result = (new Analyzer($analyzerOptions))->analyze([$path], $entry);
+
+        $this->warnings = [];
+        if ($result->truncated) {
+            $this->warnings[] = 'symbolic analysis was truncated (path/state/timeout/depth budget); results may be incomplete (increase --sym-max-paths / --sym-max-states)';
+        }
+        foreach ($result->parseErrors as $parseError) {
+            $this->warnings[] = 'symbolic parse error: ' . $parseError;
+        }
 
         $findings = [];
         foreach ($result->findings as $finding) {

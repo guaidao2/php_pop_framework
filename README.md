@@ -194,8 +194,8 @@ popchain version
 | `--engine-cmd=cmd` | External engine command: JSON request on stdin, JSON response on stdout |
 | `--engine-timeout=sec` | Engine timeout in seconds (default 10) |
 | `--sym-timeout=sec` | Symbolic engine time limit in seconds (default 30) |
-| `--sym-max-paths=N` | Symbolic engine max explored paths (default 500) |
-| `--sym-max-states=N` | Max states per execution point (default 64) |
+| `--sym-max-paths=N` | Symbolic engine max explored paths (default 2000) |
+| `--sym-max-states=N` | Max states per execution point (default 128) |
 | `--sym-max-depth=N` | Max inlined call depth (default 8) |
 | `--sym-max-loop=N` | Max loop unroll count (default 3) |
 | `--sym-entry=file` | Only analyze this entry file with the symbolic engine |
@@ -274,6 +274,9 @@ Static analysis cannot cover every dynamic feature PHP offers. Current limits an
 - Dynamic method names are resolved by literal-prefix matching over public methods; collisions (many methods sharing the prefix) can add candidate chains that need manual confirmation, and names with no static prefix are not resolved
 - Fixed literal sink arguments produce reachability chains only; whether the hardcoded operation is actually harmful depends on the target
 - Method parameter constraints only cover `is_array` / `count` / element comparisons / `intval`-style comparisons
+- Symbolic analysis is bounded by path/state budgets; when a large project hits the limit the CLI prints a truncation warning (raise `--sym-max-paths` / `--sym-max-states` to dig deeper)
+- `realpath()` containment guards are recognised: `$real = realpath($path); $base = realpath('/fixed'); if ($real === false || $base === false || strpos($real . '/', $base . '/') !== 0) exit;` suppresses path-confined file-read findings; weak prefix checks (no separator on the base side, base `/`, variable base, reversed direction, non-terminating guard) still report
+- `header()` / `setcookie()` reject CRLF values on modern PHP, so response-header injection is only reported for `mail()`; `realpath()` results are treated as local paths (not SSRF sources), and `str_replace` that removes both path separators clears path-traversal taint
 - Gadgets whose magic methods depend on runtime-created state (open handles, live database connections, loaded extensions) cannot be reproduced by property injection alone
 - Anonymous classes cannot be instantiated by `unserialize`, so they are intentionally skipped rather than modelled
 

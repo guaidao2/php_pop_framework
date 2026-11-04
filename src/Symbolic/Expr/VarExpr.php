@@ -35,6 +35,15 @@ final class VarExpr extends Expr
 
     public function toString(): string
     {
+        // 未知值内部名形如 <?call-iconv:12>，显示成 iconv(?) 更好读
+        if (preg_match('/^<\?([a-z0-9-]+):\d+>$/', $this->name, $match) === 1) {
+            $label = $match[1];
+            if (str_starts_with($label, 'call-')) {
+                $label = substr($label, 5);
+            }
+            return $label . '(?)';
+        }
+
         return $this->name;
     }
 

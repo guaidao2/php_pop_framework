@@ -202,6 +202,10 @@ final class ArrayValue extends Value
 
     public function toExpr(): Expr
     {
+        if ($this->sourcePath !== null) {
+            return new VarExpr($this->sourcePath, Type::Array);
+        }
+
         $constant = true;
         $values = [];
         foreach ($this->items as $key => $value) {

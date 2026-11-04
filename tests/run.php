@@ -607,6 +607,24 @@ ob_start();
 $exit = Application::run(['popchain', 'find', __DIR__ . '/../examples/symbolic/vuln']);
 $defaultAllOut = ob_get_clean();
 check('默认运行全部检测器', $exit === 0 && str_contains($defaultAllOut, '(symbolic/XSS)'), $defaultAllOut);
+
+ob_start();
+Application::run(['popchain', 'find', __DIR__ . '/../examples/symbolic/vuln', '--type=symbolic', '--sym-max-paths=1']);
+$truncatedOut = ob_get_clean();
+check('预算截断时打印告警', str_contains($truncatedOut, '[warn]') && str_contains($truncatedOut, 'truncated'), $truncatedOut);
+
+ob_start();
+Application::run(['popchain', 'find', __DIR__ . '/../examples/symbolic/vuln', '--type=symbolic', '--sym-max-paths=1', '--json']);
+$truncatedJson = json_decode(ob_get_clean(), true);
+check('预算截断写入 JSON warnings', is_array($truncatedJson)
+    && ($truncatedJson['warnings'] ?? []) !== [], json_encode($truncatedJson));
+
+ob_start();
+$exit = Application::run(['popchain', 'find', __DIR__ . '/fixtures/object_injection_only.php']);
+$objectOnlyOut = ob_get_clean();
+check('对象注入会标注没有可用 POP 链', $exit === 0
+    && str_contains($objectOnlyOut, 'PHP Object Injection')
+    && str_contains($objectOnlyOut, 'no POP chain'), $objectOnlyOut);
 check('--list-types 列出 all', str_contains($typesOut2, 'all'), $typesOut2);
 
 ob_start();
