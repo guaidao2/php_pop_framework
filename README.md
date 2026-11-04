@@ -84,6 +84,7 @@ Note: the URL must serve **raw PHP source**. If the page is rendered HTML, requi
 
 ```bash
 ./popchain find ./src --sink=system --cmd='id'
+./popchain find ./src --sink=file_get_contents --read-file=/flag
 ./popchain find ./src --entry=all --output=payloads.txt
 ```
 
@@ -113,7 +114,11 @@ popchain version
 | `--entry=a,b` | Entry magic methods, `__destruct,__wakeup,__unserialize` by default; `--entry=all` enables every magic method |
 | `--class=Entry` | Keep only chains that enter through the given class (short name or fully qualified namespace) |
 | `--sink=system` | Keep only chains that reach the given sink function |
-| `--cmd=id` | Value to write into the sink argument (default `id`) |
+| `--cmd=value` | Value for command-execution sinks (default `id`) |
+| `--read-file=path` | Value for file-read and `include` sinks (default `/etc/passwd`) |
+| `--write-file=path` | Value for file-write sinks (default `/tmp/popchain.txt`) |
+| `--delete-file=path` | Value for file-delete sinks (default `/tmp/popchain.txt`) |
+| `--move-file=path` | Value for file move / copy / permission sinks (default `/tmp/popchain.txt`) |
 | `--output=file` | Write payloads to a file; in JSON mode, writes JSON |
 | `--max-depth=8` | Maximum chain depth |
 | `--max-chains=50` | Maximum number of chains to output |

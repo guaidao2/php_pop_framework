@@ -14,7 +14,7 @@ use PopChain\Payload\PayloadBuilder;
  */
 final class Application
 {
-    public const VERSION = '1.2.2';
+    public const VERSION = '1.2.3';
 
     private const DEFAULT_ENTRIES = ['__destruct', '__wakeup', '__unserialize'];
 
@@ -33,7 +33,19 @@ final class Application
     /** 反序列化时会被自动调用的入口；其余魔术方法需要外部触发。 */
     private const DESERIALIZE_ENTRIES = ['__destruct', '__wakeup', '__unserialize'];
 
-    /** 没给 --cmd 时，按 sink 分类给一个合适的默认值。 */
+    /** sink 分类 => 对应取值选项；未写时再用 DEFAULT_VALUES 的默认值。 */
+    private const CATEGORY_OPTIONS = [
+        'rce' => 'cmd',
+        'file_read' => 'read-file',
+        'include' => 'read-file',
+        'file_write' => 'write-file',
+        'file_delete' => 'delete-file',
+        'file_move' => 'move-file',
+        'file_copy' => 'move-file',
+        'file_perms' => 'move-file',
+    ];
+
+    /** 没有给选项时，按 sink 分类给一个合适的默认值。 */
     private const DEFAULT_VALUES = [
         'rce' => 'id',
         'file_read' => '/etc/passwd',
@@ -290,7 +302,11 @@ Options:
                        --entry=all enables every magic method
   --class=Entry        Only keep chains whose entry class matches
   --sink=system        Only keep chains hitting the given sink
-  --cmd=value          Value written to the sink argument (default depends on the sink category)
+  --cmd=value          Value for RCE sinks (default: id)
+  --read-file=path     Value for file read / include sinks (default: /etc/passwd)
+  --write-file=path    Value for file write sinks (default: /tmp/popchain.txt)
+  --delete-file=path   Value for file delete sinks (default: /tmp/popchain.txt)
+  --move-file=path     Value for file move / copy / permission sinks (default: /tmp/popchain.txt)
   --output=file        Write payloads to a file (JSON in --json mode)
   --max-depth=8        Maximum chain depth
   --max-chains=50      Maximum number of chains
@@ -333,7 +349,11 @@ php_pop_framework v{$version} — PHP 反序列化 POP 链自动生成器
                        --entry=all 启用全部魔术方法入口
   --class=Entry        只保留指定类（短名或完整命名空间）作为入口的链
   --sink=system        只保留指定 sink 函数的链
-  --cmd=值             sink 参数要写入的值（默认值按 sink 分类决定）
+  --cmd=值             命令执行类 sink 的写入值（默认 id）
+  --read-file=路径     文件读取 / 包含类 sink 的写入值（默认 /etc/passwd）
+  --write-file=路径    文件写入类 sink 的写入值（默认 /tmp/popchain.txt）
+  --delete-file=路径   文件删除类 sink 的写入值（默认 /tmp/popchain.txt）
+  --move-file=路径     文件移动 / 复制 / 权限类 sink 的写入值（默认 /tmp/popchain.txt）
   --output=文件        把 payload 写入文件（JSON 模式写 JSON）
   --max-depth=8        链最大深度
   --max-chains=50      最多输出多少条链
@@ -491,13 +511,12 @@ TXT;
         }
 
         $builder = new PayloadBuilder($classes, (bool) self::option($options, 'obfuscate', false));
-        $customValue = self::option($options, 'cmd', null);
+        $legacyValue = self::option($options, 'cmd', null);
 
         $records = [];
         foreach ($chains as $chain) {
-            $value = is_string($customValue) && $customValue !== ''
-                ? $customValue
-                : self::defaultValue($chain->sink?->category);
+            $category = $chain->sink?->category;
+            $value = self::valueFor($category, $options, $legacyValue);
             $payloadString = $builder->build($chain, $value);
             $records[] = [
                 'entry' => $chain->entryClass->name . '::' . $chain->entryMethod->name,
@@ -612,6 +631,29 @@ TXT;
     }
 
     /** 终端展示用：把 payload 里的 NUL 字节转义，避免复制/管道被当二进制。 */
+    /**
+     * 按 sink 分类取 payload 值：专用选项 > 兼容的 --cmd > 分类默认值。
+     *
+     * @param array<string, mixed> $options
+     */
+    private static function valueFor(?string $category, array $options, mixed $legacyValue): string
+    {
+        $optionName = $category !== null ? (self::CATEGORY_OPTIONS[$category] ?? null) : null;
+
+        if ($optionName !== null) {
+            $specific = self::option($options, $optionName, null);
+            if (is_string($specific) && $specific !== '') {
+                return $specific;
+            }
+        }
+
+        if (is_string($legacyValue) && $legacyValue !== '') {
+            return $legacyValue;
+        }
+
+        return self::defaultValue($category);
+    }
+
     private static function defaultValue(?string $category): string
     {
         if ($category !== null && isset(self::DEFAULT_VALUES[$category])) {

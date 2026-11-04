@@ -388,6 +388,42 @@ $reparsed = @unserialize($obfuscatedPayload);
 check('--obfuscate 的 payload 仍可被 PHP 解析', $reparsed !== false, $obfuscatedPayload);
 unset($reparsed);
 
+echo "== 文件类 sink 专用选项 ==\n";
+$fileSinkCli = static function (array $extra) {
+    ob_start();
+    Application::run(array_merge(
+        ['popchain', 'find', __DIR__ . '/fixtures/file_sinks.php'],
+        $extra,
+    ));
+    return ob_get_clean();
+};
+
+$defaultRead = $fileSinkCli(['--class=ReadEntry']);
+check('file_read 默认值使用文件路径', str_contains($defaultRead, '/etc/passwd'), $defaultRead);
+
+$readFlag = $fileSinkCli(['--class=ReadEntry', '--read-file=/flag']);
+check('--read-file 覆盖文件读取目标', str_contains($readFlag, '/flag'), $readFlag);
+
+$legacyCmd = $fileSinkCli(['--class=ReadEntry', '--cmd=/legacy.txt']);
+check('旧的 --cmd 仍可覆盖（向后兼容）', str_contains($legacyCmd, '/legacy.txt'), $legacyCmd);
+
+$writeFile = $fileSinkCli(['--class=WriteEntry', '--write-file=/tmp/writeme.txt']);
+check('--write-file 覆盖写入目标', str_contains($writeFile, '/tmp/writeme.txt'), $writeFile);
+
+$deleteFile = $fileSinkCli(['--class=DeleteEntry', '--delete-file=/tmp/delete-me.txt']);
+check('--delete-file 覆盖删除目标', str_contains($deleteFile, '/tmp/delete-me.txt'), $deleteFile);
+
+$moveFile = $fileSinkCli(['--class=MoveEntry', '--move-file=/tmp/move-me.txt']);
+check('--move-file 覆盖移动目标', str_contains($moveFile, '/tmp/move-me.txt'), $moveFile);
+
+$includeFile = $fileSinkCli(['--class=IncludeEntry', '--read-file=/tmp/inc.php']);
+check('--read-file 同时覆盖 include 目标', str_contains($includeFile, '/tmp/inc.php'), $includeFile);
+
+ob_start();
+Application::run(['popchain', 'help']);
+$helpText = ob_get_clean();
+check('帮助里列出 --read-file / --write-file', str_contains($helpText, '--read-file') && str_contains($helpText, '--write-file'));
+
 echo "== CLI ==\n";
 ob_start();
 $exit = Application::run(['popchain', 'find', __DIR__ . '/../examples/demo.php', '--class=Entry', '--cmd=echo CLI']);

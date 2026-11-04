@@ -84,6 +84,7 @@ cat chal.php | ./popchain find --stdin --cmd='id'
 
 ```bash
 ./popchain find ./src --sink=system --cmd='id'
+./popchain find ./src --sink=file_get_contents --read-file=/flag
 ./popchain find ./src --entry=all --output=payloads.txt
 ```
 
@@ -113,7 +114,11 @@ popchain version
 | `--entry=a,b` | 入口魔术方法，默认 `__destruct,__wakeup,__unserialize`；`--entry=all` 启用全部魔术方法 |
 | `--class=Entry` | 只保留指定类（短名或完整命名空间）作为入口的链 |
 | `--sink=system` | 只保留指定 sink 函数的链 |
-| `--cmd=id` | sink 参数要写入的值（默认 `id`） |
+| `--cmd=值` | 命令执行类 sink 的写入值（默认 `id`） |
+| `--read-file=路径` | 文件读取 / `include` 类 sink 的写入值（默认 `/etc/passwd`） |
+| `--write-file=路径` | 文件写入类 sink 的写入值（默认 `/tmp/popchain.txt`） |
+| `--delete-file=路径` | 文件删除类 sink 的写入值（默认 `/tmp/popchain.txt`） |
+| `--move-file=路径` | 文件移动 / 复制 / 权限类 sink 的写入值（默认 `/tmp/popchain.txt`） |
 | `--output=文件` | 把 payload 写入文件；JSON 模式写 JSON |
 | `--max-depth=8` | 链最大深度 |
 | `--max-chains=50` | 最多输出多少条链 |
