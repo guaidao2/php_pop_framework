@@ -47,7 +47,7 @@ final class PayloadBuilder
             $nodes[$current] = $next;
         }
 
-        $this->fillRequiredArrayArgs($chain, $nodes, $fromNode);
+        $this->fillArraySlots($chain, $nodes, $fromNode);
         $this->applySinkValue($chain, $nodes, $fromNode, $current, $value);
 
         return (new Serializer())->serializeNode($nodes[0]);
@@ -57,6 +57,46 @@ final class PayloadBuilder
     private function isInternalEdge(Edge $edge): bool
     {
         return $edge->viaProperty === '(this)' || $edge->viaProperty === '(static)';
+    }
+
+    /**
+     * 回调通过数组传参时，先把数组属性的所有槽位建出来（占位空串）。
+     *
+     * @param array<int, PayloadNode> $nodes
+     * @param array<int, int> $fromNode
+     */
+    private function fillArraySlots(Chain $chain, array $nodes, array $fromNode): void
+    {
+        /** @var array<int, array<string, array{indexes: array<int,true>, class: ClassInfo}>> $slots */
+        $slots = [];
+
+        foreach ($chain->edges as $index => $edge) {
+            foreach ($edge->argMapping as $arg) {
+                if ($arg->kind !== ArgInfo::ARRAY_ELEMENT || $arg->name === null) {
+                    continue;
+                }
+                $nodeIndex = $fromNode[$index] ?? 0;
+                $slots[$nodeIndex][$arg->name]['indexes'][(int) $arg->literal] = true;
+                $slots[$nodeIndex][$arg->name]['class'] = $edge->fromClass;
+            }
+        }
+
+        foreach ($slots as $nodeIndex => $properties) {
+            if (!isset($nodes[$nodeIndex])) {
+                continue;
+            }
+            foreach ($properties as $name => $slot) {
+                if ($nodes[$nodeIndex]->has($name)) {
+                    continue;
+                }
+                $array = [];
+                foreach (array_keys($slot['indexes']) as $position) {
+                    $array[$position] = '';
+                }
+                ksort($array);
+                $this->setProperty($nodes[$nodeIndex], $slot['class'], $name, $array);
+            }
+        }
     }
 
     /**
@@ -83,6 +123,28 @@ final class PayloadBuilder
             return;
         }
 
+        // __call 的 $args[k]：值来自调用点的第 k 个实参
+        if ($arg->kind === ArgInfo::ARG_ELEMENT) {
+            $path = $arg->path();
+            $index = (int) ($path[0] ?? 0);
+            $this->sinkValueWritten = $this->backtrack(
+                $chain,
+                $fromNode,
+                count($chain->edges) - 1,
+                $index,
+                $value,
+                $nodes,
+            );
+            return;
+        }
+
+        // __unserialize 的 $data['x'] 直接进 sink
+        if ($arg->kind === ArgInfo::PARAM_ELEMENT) {
+            $this->writeParameterElement($nodes[$sinkNode], $sinkClass, $arg, $value);
+            $this->sinkValueWritten = true;
+            return;
+        }
+
         if ($arg->kind === ArgInfo::VARIABLE && $arg->name !== null) {
             $position = $chain->sinkObjectMethod()?->paramNamed($arg->name)?->position;
             if ($position !== null) {
@@ -93,37 +155,6 @@ final class PayloadBuilder
                     $position,
                     $value,
                     $nodes,
-                );
-            }
-        }
-    }
-
-    /**
-     * 回调通过数组传参时，payload 里必须有这个数组属性，否则被调方法的必需参数拿不到值。
-     * 这里给没被 sink 值覆盖到的数组属性补一个占位元素。
-     *
-     * @param array<int, PayloadNode> $nodes
-     * @param array<int, int> $fromNode
-     */
-    private function fillRequiredArrayArgs(Chain $chain, array $nodes, array $fromNode): void
-    {
-        foreach ($chain->edges as $index => $edge) {
-            foreach ($edge->argMapping as $arg) {
-                if ($arg->kind !== ArgInfo::ARRAY_ELEMENT || $arg->name === null) {
-                    continue;
-                }
-                $nodeIndex = $fromNode[$index] ?? 0;
-                if (!isset($nodes[$nodeIndex])) {
-                    continue;
-                }
-                if ($nodes[$nodeIndex]->has($arg->name)) {
-                    continue;
-                }
-                $this->setProperty(
-                    $nodes[$nodeIndex],
-                    $edge->fromClass,
-                    $arg->name,
-                    $this->arrayValue((int) $arg->literal, ''),
                 );
             }
         }
@@ -171,15 +202,15 @@ final class PayloadBuilder
             return true;
         }
 
-        // 入口魔术方法的参数数组元素（$data['cmd']）：写同名属性，unserialize 会把它交给 __unserialize
-        if ($arg->kind === ArgInfo::PARAM_ELEMENT && is_string($arg->literal)) {
-            $nodes[$nodeIndex]->set($arg->literal, $value, 'public', $edge->fromClass->name);
+        // 入口魔术方法的参数数组元素（$data['cmd'] / $data['a']['b']）
+        if ($arg->kind === ArgInfo::PARAM_ELEMENT) {
+            $this->writeParameterElement($nodes[$nodeIndex], $edge->fromClass, $arg, $value);
             return true;
         }
 
-        // 回调通过数组传参：写数组值，而不是标量（否则运行时是 TypeError）
+        // 回调通过数组传参：写数组槽位，而不是标量（否则运行时是 TypeError）
         if ($arg->kind === ArgInfo::ARRAY_ELEMENT && $arg->name !== null) {
-            $this->setProperty($nodes[$nodeIndex], $edge->fromClass, $arg->name, $this->arrayValue((int) $arg->literal, $value));
+            $this->writeArraySlot($nodes[$nodeIndex], $edge->fromClass, $arg->name, (int) $arg->literal, $value);
             return true;
         }
 
@@ -193,15 +224,32 @@ final class PayloadBuilder
         return false;
     }
 
-    /** 构造一个前 n 项占位、第 n 项为目标值的数组。 */
-    private function arrayValue(int $index, mixed $value): array
+    /** 把 __unserialize 的 $data['a']['b'] 写成嵌套数组属性。 */
+    private function writeParameterElement(PayloadNode $node, ClassInfo $class, ArgInfo $arg, mixed $value): void
     {
-        $array = [];
-        for ($position = 0; $position < $index; $position++) {
-            $array[] = '';
+        $path = $arg->path();
+        if ($path === []) {
+            return;
         }
-        $array[] = $value;
-        return $array;
+
+        $wrapped = $value;
+        for ($index = count($path) - 1; $index >= 1; $index--) {
+            $wrapped = [$path[$index] => $wrapped];
+        }
+
+        $node->set((string) $path[0], $wrapped, 'public', $class->name);
+    }
+
+    /** 写回调数组的某个槽位，保留已有的其它槽位。 */
+    private function writeArraySlot(PayloadNode $node, ClassInfo $class, string $name, int $index, mixed $value): void
+    {
+        $array = $node->properties[$name]['value'] ?? [];
+        if (!is_array($array)) {
+            $array = [];
+        }
+        $array[$index] = $value;
+        ksort($array);
+        $this->setProperty($node, $class, $name, $array);
     }
 
     private function setProperty(PayloadNode $node, ClassInfo $class, string $name, mixed $value): void

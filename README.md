@@ -1,8 +1,8 @@
-# php-pop-chain
+# php_pop_framework
 
 中文文档: [README.zh-CN.md](README.zh-CN.md)
 
-An automatic PHP deserialization POP chain generator for CTF and authorized code auditing.
+php_pop_framework is a PHP deserialization POP chain generator for CTF and authorized code auditing. The CLI entry point is `popchain`.
 
 Give it a PHP source tree (a single file, a directory, stdin, or a URL) and the tool will:
 
@@ -42,7 +42,7 @@ If none is found, it prints installation instructions and exits.
 
 ## Unified entry point
 
-`popchain` in the project root is the only entry point; `bin/popchain` is a compatibility alias, and the two behave identically:
+`popchain` in the project root is the only entry point (the tool itself is php_pop_framework); `bin/popchain` is a compatibility alias, and the two behave identically:
 
 ```bash
 ./popchain version
@@ -162,6 +162,11 @@ The payload is assembled straight into PHP's serialization format by `src/Payloa
 - String contexts include `echo` / `print`, concatenation, string casts, `die()` / `exit()`, interpolation (`"{$this->obj}"`), the arguments of string built-ins (`strlen`, `str_replace`, `sprintf`, `strval`, ...), and the string parameters of sink functions such as `file_get_contents`
 - Local taint propagation: variable copies, local aliases used as method receivers, property-to-property assignment, and string concatenation, so sink arguments stay traceable
 - Callback arguments passed through arrays (`call_user_func_array`, `array_map`, `array_filter`, `array_walk`, `array_reduce`) are mapped as array elements, so the payload writes an array value instead of a scalar
+- `usort` / `uasort` / `uksort` comparators: the first two callee parameters receive the first two array elements, so element values stay controllable
+- Variable functions: `$fn = $this->cb; $fn(...)`, `$fn = [$this->obj, 'method']; $fn(...)`, and `$fn = 'system'; $fn(...)` all resolve to real call sites
+- `__call` / `__callStatic`: `$args[0]` is mapped back to the corresponding argument at the call site
+- `__unserialize(array $data)`: nested reads such as `$data['a']['b']` are handled, not just one level deep
+- Trait conflict adaptation: `insteadof` chooses the winning method, `as` adds aliases or changes visibility
 - Argument backtracking: when a sink argument comes from a method parameter, trace it back along the call chain to the property that ultimately has to be assigned; constant arguments at the call site are reported as not controllable instead of producing a chain
 - `__unserialize(array $data)` entries: `$data['cmd']` reads are treated as attacker-controlled data, both when assigned to a property and when passed straight to a sink
 - Sink categories: RCE, file read/write/delete/move, file inclusion, deserialization, callable, environment, variable injection, and more
@@ -173,17 +178,12 @@ The payload is assembled straight into PHP's serialization format by `src/Payloa
 
 Static analysis cannot cover every dynamic feature PHP offers. The current version does not handle:
 
-- Variable functions `$fn()` and `$$var` where the callable is a plain local variable; use the callable-property and callable-array forms instead
-- `usort` / `uasort` / `uksort` / `preg_replace_callback`: the engine decides which elements reach the callback, so callee parameters are not mapped
-- `__call` receives its arguments as an array; element-level mapping is not performed
-- Reflection, code generated after `eval`, runtime `include`
+- Reflection, code generated after `eval`, and `include` paths resolved at runtime
 - Control-flow reachability (`if` conditions, exception paths, loop counts)
-- Complex parameter structures for `__unserialize` (requires manual adaptation)
-- Property overwrites performed by `__wakeup`
-- Trait conflict resolution (`insteadof` / `as`); members are merged in declaration order
-- Anonymous classes (cannot be instantiated from outside)
-- Gadgets that require constructor arguments (payloads rely on reflection-equivalent constructor-less instantiation semantics)
+- `preg_replace_callback`: the callback receives a matches array rather than plain elements, so parameters are not mapped
 - Sink arguments that combine several different properties: only the first controllable property is written into the payload
+- Gadgets whose magic methods depend on runtime-created state (open handles, live database connections, loaded extensions) cannot be reproduced by property injection alone
+- Anonymous classes cannot be instantiated by `unserialize`, so they are intentionally skipped rather than modelled
 
 Whether a chain actually works ultimately depends on the class definitions and PHP version in the target environment. Reproduce and verify it locally before use.
 

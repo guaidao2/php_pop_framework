@@ -20,6 +20,8 @@ final class ClassInfo
         public bool $trait = false,
         public bool $interface = false,
         public bool $enum = false,
+        public array $traitAliases = [],
+        public array $traitPrecedence = [],
     ) {
     }
 

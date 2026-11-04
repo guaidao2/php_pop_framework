@@ -20,6 +20,7 @@ final class ArgInfo
     public const CALLABLE_ARRAY = 'callable_array';
     public const ARRAY_ELEMENT = 'array_element';
     public const PARAM_ELEMENT = 'param_element';
+    public const ARG_ELEMENT = 'arg_element';
     public const EXPR = 'expr';
 
     /**
@@ -63,6 +64,23 @@ final class ArgInfo
         return $names;
     }
 
+    /** PARAM_ELEMENT 的维度路径（支持 $data['a']['b']），展示用。 */
+    public function describePath(): string
+    {
+        $path = is_array($this->literal) ? $this->literal : [$this->literal];
+        $out = '';
+        foreach ($path as $key) {
+            $out .= '[' . var_export($key, true) . ']';
+        }
+        return $out;
+    }
+
+    /** PARAM_ELEMENT 的完整路径；非嵌套时也归一成数组。 */
+    public function path(): array
+    {
+        return is_array($this->literal) ? $this->literal : [$this->literal];
+    }
+
     /** 该参数最终要写入的属性名（CONCAT 取第一个可控属性）。 */
     public function targetProperty(): ?string
     {
@@ -89,7 +107,8 @@ final class ArgInfo
             self::CONCAT => $this->raw ?? 'concat',
             self::CALLABLE_ARRAY => '[$this->' . $this->name . ', ' . var_export($this->literal, true) . ']',
             self::ARRAY_ELEMENT => '$this->' . $this->name . '[' . (string) $this->literal . ']',
-            self::PARAM_ELEMENT => '$' . $this->name . '[' . var_export($this->literal, true) . ']',
+            self::PARAM_ELEMENT => '$' . $this->name . $this->describePath(),
+            self::ARG_ELEMENT => '$' . $this->name . $this->describePath(),
             default => $this->raw ?? 'expr',
         };
     }

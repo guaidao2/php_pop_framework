@@ -162,6 +162,8 @@ final class ProjectParser
         }
 
         $traits = [];
+        $traitAliases = [];
+        $traitPrecedence = [];
         $properties = [];
         $methods = [];
 
@@ -169,6 +171,29 @@ final class ProjectParser
             if ($stmt instanceof Stmt\TraitUse) {
                 foreach ($stmt->traits as $trait) {
                     $traits[] = ltrim($trait->toString(), '\\');
+                }
+                foreach ($stmt->adaptations as $adaptation) {
+                    if ($adaptation instanceof Stmt\TraitUseAdaptation\Alias) {
+                        $traitAliases[] = [
+                            'trait' => $adaptation->trait !== null
+                                ? ltrim($adaptation->trait->toString(), '\\')
+                                : null,
+                            'method' => $adaptation->method->toString(),
+                            'newName' => $adaptation->newName?->toString(),
+                            'visibility' => $this->visibilityFromModifier($adaptation->newModifier),
+                        ];
+                    } elseif ($adaptation instanceof Stmt\TraitUseAdaptation\Precedence) {
+                        $traitPrecedence[] = [
+                            'trait' => $adaptation->trait !== null
+                                ? ltrim($adaptation->trait->toString(), '\\')
+                                : null,
+                            'method' => $adaptation->method->toString(),
+                            'insteadof' => array_map(
+                                static fn (Name $name): string => ltrim($name->toString(), '\\'),
+                                $adaptation->insteadof,
+                            ),
+                        ];
+                    }
                 }
             } elseif ($stmt instanceof Stmt\Property) {
                 foreach ($stmt->props as $prop) {
@@ -218,6 +243,8 @@ final class ProjectParser
             trait: $node instanceof Stmt\Trait_,
             interface: $node instanceof Stmt\Interface_,
             enum: $node instanceof Stmt\Enum_,
+            traitAliases: $traitAliases,
+            traitPrecedence: $traitPrecedence,
         );
     }
 
@@ -239,6 +266,7 @@ final class ProjectParser
 
         $calls = [];
         $stringUses = [];
+        $collector = null;
         if ($node->stmts !== null) {
             $traverser = new NodeTraverser();
             $paramNames = [];
@@ -247,7 +275,7 @@ final class ProjectParser
                     $paramNames[] = $param->var->name;
                 }
             }
-            $collector = new CallCollector($paramNames);
+            $collector = new CallCollector($paramNames, $node->name->toString());
             $traverser->addVisitor($collector);
             $traverser->traverse($node->stmts);
             $calls = $collector->calls;
@@ -265,7 +293,26 @@ final class ProjectParser
             magic: str_starts_with($name, '__'),
             declaringClass: $declaringClass,
             stringUses: $stringUses,
+            constantProperties: $collector?->constantProperties() ?? [],
         );
+    }
+
+    /** trait 适配里的修饰符（0 表示没写可见性）。 */
+    private function visibilityFromModifier(?int $modifier): ?string
+    {
+        if ($modifier === null) {
+            return null;
+        }
+        if (($modifier & Stmt\Class_::MODIFIER_PRIVATE) !== 0) {
+            return 'private';
+        }
+        if (($modifier & Stmt\Class_::MODIFIER_PROTECTED) !== 0) {
+            return 'protected';
+        }
+        if (($modifier & Stmt\Class_::MODIFIER_PUBLIC) !== 0) {
+            return 'public';
+        }
+        return null;
     }
 
     private function visibility(Node $node): string
@@ -311,7 +358,9 @@ final class ProjectParser
             $methods = $class->methods;
             $properties = $class->properties;
             $seen = [];
-            $this->mergeTraitMembers($class, $class, $methods, $properties, $seen);
+            $copied = [];
+            $this->mergeTraitMembers($class, $class, $methods, $properties, $seen, $copied);
+            $this->applyTraitAliases($class, $methods, $copied);
             $class->methods = $methods;
             $class->properties = $properties;
         }
@@ -328,7 +377,10 @@ final class ProjectParser
         array &$methods,
         array &$properties,
         array &$seen,
+        array &$copied = [],
     ): void {
+        $excluded = $this->excludedTraitMethods($owner);
+
         foreach ($class->traits as $traitName) {
             if (isset($seen[$traitName])) {
                 continue;
@@ -343,13 +395,18 @@ final class ProjectParser
 
             // trait 里再 use 其它 trait
             if ($trait->traits !== []) {
-                $this->mergeTraitMembers($trait, $owner, $methods, $properties, $seen);
+                $this->mergeTraitMembers($trait, $owner, $methods, $properties, $seen, $copied);
             }
 
             foreach ($trait->methods as $method) {
                 if ($this->hasMethodNamed($methods, $method->name)) {
                     continue;
                 }
+                if (isset($excluded[strtolower($traitName)][strtolower($method->name)])) {
+                    // insteadof：这个方法被同名的另一个 trait 覆盖
+                    continue;
+                }
+                $copied[] = ['trait' => $traitName, 'name' => $method->name, 'index' => count($methods)];
                 $methods[] = new MethodInfo(
                     name: $method->name,
                     visibility: $method->visibility,
@@ -399,5 +456,125 @@ final class ProjectParser
             }
         }
         return false;
+    }
+
+    /**
+     * insteadof 排除表：trait 名 + 方法名 => true。
+     *
+     * @return array<string, array<string, true>>
+     */
+    private function excludedTraitMethods(ClassInfo $owner): array
+    {
+        $excluded = [];
+        foreach ($owner->traitPrecedence as $rule) {
+            $method = strtolower((string) $rule['method']);
+            foreach ($rule['insteadof'] as $loser) {
+                $excluded[strtolower($loser)][$method] = true;
+            }
+        }
+        return $excluded;
+    }
+
+    /**
+     * 别名指向的方法可能因为 insteadof 没被复制进类，这里回 trait 定义里取。
+     *
+     * @param array{trait:?string,method:string} $alias
+     */
+    private function aliasSourceMethod(ClassInfo $owner, array $alias): ?MethodInfo
+    {
+        $traitName = $alias['trait'];
+        if ($traitName !== null) {
+            $trait = $this->classes[$traitName] ?? null;
+            $method = $trait?->method($alias['method']);
+            return $method === null ? null : $this->methodOwnedBy($method, $owner);
+        }
+
+        foreach ($owner->traits as $used) {
+            $method = ($this->classes[$used] ?? null)?->method($alias['method']);
+            if ($method !== null) {
+                return $this->methodOwnedBy($method, $owner);
+            }
+        }
+        return null;
+    }
+
+    /** 复制一份方法信息，声明类改成使用该 trait 的类。 */
+    private function methodOwnedBy(MethodInfo $method, ClassInfo $owner): MethodInfo
+    {
+        return new MethodInfo(
+            name: $method->name,
+            visibility: $method->visibility,
+            static: $method->static,
+            params: $method->params,
+            calls: $method->calls,
+            line: $method->line,
+            magic: $method->magic,
+            declaringClass: $owner->name,
+            stringUses: $method->stringUses,
+        );
+    }
+
+    /**
+     * 应用 trait 别名（as）：改名复制一份，或只改可见性。
+     *
+     * @param list<MethodInfo> $methods
+     * @param list<array{trait:string,name:string,index:int}> $copied
+     */
+    private function applyTraitAliases(ClassInfo $owner, array &$methods, array $copied): void
+    {
+        foreach ($owner->traitAliases as $alias) {
+            $target = null;
+            foreach ($copied as $entry) {
+                if (strcasecmp($entry['name'], $alias['method']) !== 0) {
+                    continue;
+                }
+                if ($alias['trait'] !== null && strcasecmp($entry['trait'], (string) $alias['trait']) !== 0) {
+                    continue;
+                }
+                $target = $entry['index'];
+                break;
+            }
+
+            $source = $target !== null && isset($methods[$target])
+                ? $methods[$target]
+                : $this->aliasSourceMethod($owner, $alias);
+
+            if ($source === null) {
+                continue;
+            }
+
+            $visibility = $alias['visibility'] ?? $source->visibility;
+
+            if ($alias['newName'] === null) {
+                $methods[$target] = new MethodInfo(
+                    name: $source->name,
+                    visibility: $visibility,
+                    static: $source->static,
+                    params: $source->params,
+                    calls: $source->calls,
+                    line: $source->line,
+                    magic: $source->magic,
+                    declaringClass: $source->declaringClass,
+                    stringUses: $source->stringUses,
+                );
+                continue;
+            }
+
+            $newName = (string) $alias['newName'];
+            if ($this->hasMethodNamed($methods, $newName)) {
+                continue;
+            }
+            $methods[] = new MethodInfo(
+                name: $newName,
+                visibility: $visibility,
+                static: $source->static,
+                params: $source->params,
+                calls: $source->calls,
+                line: $source->line,
+                magic: str_starts_with($newName, '__'),
+                declaringClass: $source->declaringClass,
+                stringUses: $source->stringUses,
+            );
+        }
     }
 }

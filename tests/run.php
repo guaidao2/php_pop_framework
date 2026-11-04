@@ -295,6 +295,52 @@ gc_collect_cycles();
 $unsPropOutput = trim((string) ob_get_clean());
 check('$data 经属性中转 payload 真实执行', str_contains($unsPropOutput, 'UNS_PROP_OK'), $unsPropOutput);
 
+echo "== 原已知限制的覆盖 ==\n";
+$limits = (new ProjectParser())->parsePath(__DIR__ . '/fixtures/limits_demo.php');
+$limitsByEntry = chainsByEntry((new ChainFinder($limits, new SinkScanner()))->find());
+foreach ([
+    'VarFuncEntry' => '变量函数（属性）',
+    'LiteralFuncEntry' => '变量函数（函数名字符串）',
+    'ArrFuncEntry' => '变量函数（可调用数组）',
+    'SortEntry' => 'usort 比较器',
+    'CallArgsEntry' => '__call 实参数组',
+    'NestedUnsEntry' => '__unserialize 嵌套数组',
+    'TraitAdaptEntry' => 'trait insteadof/as',
+] as $entry => $label) {
+    check($label . ' 能出链', isset($limitsByEntry[$entry]));
+}
+
+// trait 适配：run 必须来自 RunTraitA（带 sink），runB 是别名
+$adaptRun = $limits['TraitAdaptEntry']->method('run');
+$adaptRunHasSink = false;
+foreach ($adaptRun?->calls ?? [] as $call) {
+    if ($call->target === 'system') {
+        $adaptRunHasSink = true;
+    }
+}
+check('insteadof 选中带 sink 的 trait 方法', $adaptRunHasSink);
+check('as 生成了别名方法 runB', $limits['TraitAdaptEntry']->method('runB') !== null);
+
+$limitsBuilder = new PayloadBuilder($limits);
+$execCases = [
+    'VarFuncEntry' => 'VARFUNC_OK',
+    'LiteralFuncEntry' => 'LITERAL_OK',
+    'ArrFuncEntry' => 'ARRFUNC_OK',
+    'SortEntry' => 'SORT_OK',
+    'CallArgsEntry' => 'CALLARGS_OK',
+    'NestedUnsEntry' => 'NESTED_OK',
+];
+require __DIR__ . '/fixtures/limits_demo.php';
+foreach ($execCases as $entry => $marker) {
+    $built = $limitsBuilder->build($limitsByEntry[$entry], 'echo ' . $marker);
+    ob_start();
+    $object = unserialize($built);
+    unset($object);
+    gc_collect_cycles();
+    $output = trim((string) ob_get_clean());
+    check($entry . ' payload 真实执行', str_contains($output, $marker), $built . ' / ' . $output);
+}
+
 echo "== CLI ==\n";
 ob_start();
 $exit = Application::run(['popchain', 'find', __DIR__ . '/../examples/demo.php', '--class=Entry', '--cmd=echo CLI']);
@@ -323,7 +369,7 @@ Application::run(['popchain', 'find', __DIR__ . '/../examples/demo.php', '--json
 $jsonOutput = ob_get_clean();
 $decoded = json_decode($jsonOutput, true);
 check('--json 输出可解析且包含 2 条链', is_array($decoded) && count($decoded['chains'] ?? []) === 2);
-check('--json 带工具名与版本', ($decoded['tool'] ?? '') === 'php-pop-chain' && ($decoded['version'] ?? '') === Application::VERSION);
+check('--json 带工具名与版本', ($decoded['tool'] ?? '') === 'php_pop_framework' && ($decoded['version'] ?? '') === Application::VERSION);
 
 echo "== CLI 健壮性 ==\n";
 ob_start();

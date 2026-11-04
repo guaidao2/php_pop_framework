@@ -1,6 +1,6 @@
 {
-    "name": "guaidao2/php-pop-chain",
-    "description": "PHP deserialization POP chain generator: parse a codebase, find gadget chains and build payloads.",
+    "name": "guaidao2/php_pop_framework",
+    "description": "php_pop_framework: PHP deserialization POP chain generator that parses a codebase, finds gadget chains and builds payloads.",
     "type": "project",
     "license": "MIT",
     "authors": [

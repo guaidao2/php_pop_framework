@@ -1,8 +1,8 @@
-# php-pop-chain
+# php_pop_framework
 
 English: [README.md](README.md)
 
-PHP 反序列化 POP 链自动生成器，面向 CTF / 授权代码审计。
+php_pop_framework 是一个 PHP 反序列化 POP 链自动生成器，面向 CTF / 授权代码审计。命令行入口是 `popchain`。
 
 输入一份 PHP 源码（单个文件、目录、stdin 或 URL），工具会：
 
@@ -42,7 +42,7 @@ sudo apt install php-parser
 
 ## 统一入口
 
-项目根目录的 `popchain` 是唯一入口，`bin/popchain` 是兼容别名，两者行为完全一致：
+项目根目录的 `popchain` 是唯一入口（工具本身叫 php_pop_framework）；`bin/popchain` 是兼容别名，两者行为完全一致：
 
 ```bash
 ./popchain version
@@ -162,6 +162,11 @@ payload 由 `src/Payload/Serializer.php` 直接按 PHP 序列化格式拼接，*
 - 字符串上下文覆盖 `echo` / `print`、拼接、字符串强转、`die()` / `exit()`、插值（`"{$this->obj}"`）、字符串内置函数的实参（`strlen`、`str_replace`、`sprintf`、`strval` 等），以及 `file_get_contents` 这类 sink 函数的字符串参数
 - 局部污点传播：变量拷贝、把局部别名当方法接收者、属性到属性赋值、字符串拼接，sink 参数因此仍可回溯
 - 回调实参经数组传递的情形（`call_user_func_array`、`array_map`、`array_filter`、`array_walk`、`array_reduce`）按数组元素映射，payload 写数组值而不是标量
+- `usort` / `uasort` / `uksort` 比较器：前两个形参分别对应数组的前两个元素，元素值保持可控
+- 变量函数：`$fn = $this->cb; $fn(...)`、`$fn = [$this->obj, 'method']; $fn(...)`、`$fn = 'system'; $fn(...)` 都能解析成真实调用点
+- `__call` / `__callStatic`：`$args[0]` 会映射回调用点对应的实参
+- `__unserialize(array $data)`：支持 `$data['a']['b']` 这种嵌套读取，不只是一层
+- trait 冲突适配：`insteadof` 选中覆盖方，`as` 支持别名与可见性修改
 - 参数回溯：sink 参数来自方法参数时，沿调用链反推最终要赋值的属性；调用点传的是常量时按不可控处理，不会产出没有 sink 值的链
 - `__unserialize(array $data)` 入口：`$data['cmd']` 视为攻击者可控数据，赋给属性后进 sink、或直接作为 sink 实参都能出链
 - sink 分类：RCE、文件读写/删除/移动、文件包含、反序列化、可调用、环境、变量注入等
@@ -173,17 +178,12 @@ payload 由 `src/Payload/Serializer.php` 直接按 PHP 序列化格式拼接，*
 
 静态分析不可能覆盖 PHP 的全部动态特性。当前版本不处理：
 
-- 变量函数 `$fn()`、`$$var`（可调用对象是普通局部变量的情形）；这类写法请改用属性可调用或可调用数组
-- `usort` / `uasort` / `uksort` / `preg_replace_callback`：元素由引擎决定，不建立形参映射
-- `__call` 收到的是实参数组，不做元素级映射
-- 反射、`eval` 后的动态代码、运行时 `include`
+- 反射、`eval` 后生成的动态代码、运行时才确定的 `include` 路径
 - 控制流可达性（`if` 条件、异常路径、循环次数）
-- `__unserialize` 的复杂参数结构（需要手工适配）
-- `__wakeup` 对属性的覆盖
-- trait 冲突适配（`insteadof` / `as`）不处理，成员按声明顺序合并
-- 匿名类（无法从外部实例化）
-- 需要构造参数的 gadget（payload 使用反射等价的无构造实例化语义）
+- `preg_replace_callback`：回调拿到的是匹配数组而不是普通元素，不建立形参映射
 - sink 参数涉及多个不同属性时，只把第一个可控属性写入 payload
+- 魔术方法依赖运行时状态（已打开的资源句柄、活动的数据库连接、已加载扩展）的 gadget，仅靠属性注入无法复现
+- 匿名类无法被 `unserialize` 实例化，因此有意跳过而不是建模
 
 链是否真的可用，最终取决于目标环境的类定义与版本。建议在本地复现环境验证后再使用。
 

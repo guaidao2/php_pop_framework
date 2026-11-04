@@ -27,7 +27,8 @@ final class ChainFinder
      *   forward    call_user_func：剩余实参按位置传给被调用者
      *   args-array call_user_func_array：参数数组的第 k 个元素 → 第 k 个形参
      *   element    array_map / array_filter / array_walk / array_reduce：数组元素 → 指定形参
-     *   none       usort 等：元素由引擎决定，无法静态映射
+     *   elements   usort / uasort / uksort：比较器第 i 个形参 → 数组第 i 个元素
+     *   none       无法静态映射
      */
     private const CALLABLE_SINKS = [
         'call_user_func' => [0, 'forward', null, 0],
@@ -36,9 +37,9 @@ final class ChainFinder
         'array_filter' => [1, 'element', 0, 0],
         'array_walk' => [1, 'element', 0, 0],
         'array_reduce' => [1, 'element', 0, 1],
-        'usort' => [1, 'none', null, 0],
-        'uasort' => [1, 'none', null, 0],
-        'uksort' => [1, 'none', null, 0],
+        'usort' => [1, 'elements', 0, 0],
+        'uasort' => [1, 'elements', 0, 0],
+        'uksort' => [1, 'elements', 0, 0],
         'preg_replace_callback' => [1, 'none', null, 0],
     ];
 
@@ -113,6 +114,10 @@ final class ChainFinder
         // 1) 当前方法里是否已经到达 sink
         foreach ($this->scanner->hitsIn($method) as $hit) {
             if ($hit->category === 'callable') {
+                continue;
+            }
+            // __wakeup 在 __destruct 之前执行，被它写成常量的属性不再可控
+            if ($edges === [] && $this->overwrittenByWakeup($class, $method, $hit->arg)) {
                 continue;
             }
             if (!$this->argControllable($hit->arg, $method, $edges)) {
@@ -253,6 +258,42 @@ final class ChainFinder
             return $edges;
         }
 
+        // [$this->obj, 'method'](...)
+        if ($call->kind === CallSite::CALLABLE_ARRAY_INVOKE
+            && $call->receiverName !== null) {
+            $forwarded = $this->mapArgs($call->args);
+            if ($call->target !== null) {
+                foreach ($this->classesWithMethod($call->target) as [$targetClass, $targetMethod]) {
+                    $edges[] = new Edge(
+                        $class,
+                        $method,
+                        $targetClass,
+                        $targetMethod,
+                        'callable_array',
+                        $call->receiverName,
+                        $forwarded,
+                        $call->line,
+                    );
+                }
+                foreach ($this->classesWithMethod('__call') as [$targetClass, $targetMethod]) {
+                    if ($this->effectiveMethod($targetClass, $call->target) !== null) {
+                        continue;
+                    }
+                    $edges[] = new Edge(
+                        $class,
+                        $method,
+                        $targetClass,
+                        $targetMethod,
+                        'callable_array',
+                        $call->receiverName,
+                        $this->mapArgs($call->args),
+                        $call->line,
+                    );
+                }
+            }
+            return $edges;
+        }
+
         // $this->prop->method(...)
         if ($call->kind === CallSite::METHOD_CALL
             && $call->receiverKind === ArgInfo::THIS_PROPERTY
@@ -283,7 +324,7 @@ final class ChainFinder
                     $targetMethod,
                     'method',
                     $call->receiverName,
-                    [],
+                    $this->mapArgs($call->args),
                     $call->line,
                 );
             }
@@ -367,7 +408,7 @@ final class ChainFinder
             return $edges;
         }
 
-        $mapping = $this->callableArgMapping($call, $position, $mode, $arrayPosition, $elementParam);
+
 
         // ($this->fn)(...) / call_user_func($this->fn, ...)
         if ($callable->kind === ArgInfo::THIS_PROPERTY && $callable->name !== null) {
@@ -379,7 +420,7 @@ final class ChainFinder
                     $targetMethod,
                     'callable',
                     $callable->name,
-                    $mapping,
+                    $this->callableArgMapping($call, $position, $mode, $arrayPosition, $elementParam, $targetMethod),
                     $call->line,
                 );
             }
@@ -399,7 +440,7 @@ final class ChainFinder
                     $targetMethod,
                     'callable_array',
                     $callable->name,
-                    $mapping,
+                    $this->callableArgMapping($call, $position, $mode, $arrayPosition, $elementParam, $targetMethod),
                     $call->line,
                 );
             }
@@ -414,7 +455,7 @@ final class ChainFinder
                     $targetMethod,
                     'callable_array',
                     $callable->name,
-                    [],
+                    $this->callableArgMapping($call, $position, $mode, $arrayPosition, $elementParam, $targetMethod),
                     $call->line,
                 );
             }
@@ -434,6 +475,7 @@ final class ChainFinder
         string $mode,
         ?int $arrayPosition,
         int $elementParam,
+        ?MethodInfo $targetMethod = null,
     ): array {
         if ($mode === 'forward') {
             return $this->mapArgs(array_slice($call->args, $position + 1));
@@ -452,10 +494,19 @@ final class ChainFinder
             return [];
         }
 
+        if ($mode === 'elements') {
+            // 比较器两个形参分别拿到数组的两个元素
+            return [
+                0 => new ArgInfo(ArgInfo::ARRAY_ELEMENT, $property, null, 0),
+                1 => new ArgInfo(ArgInfo::ARRAY_ELEMENT, $property, null, 1),
+            ];
+        }
+
         if ($mode === 'args-array') {
-            // 参数数组的第 k 个元素 → 第 k 个形参
+            // 参数数组的第 k 个元素 → 第 k 个形参；只为目标方法的形参个数建槽位
+            $count = max(1, count($targetMethod?->params ?? []));
             $mapping = [];
-            for ($index = 0; $index < 10; $index++) {
+            for ($index = 0; $index < $count; $index++) {
                 $mapping[$index] = new ArgInfo(ArgInfo::ARRAY_ELEMENT, $property, null, $index);
             }
             return $mapping;
@@ -531,6 +582,23 @@ final class ChainFinder
         return null;
     }
 
+    /** 入口类（含父类）的 __wakeup 是否把这个属性写成了字面量。 */
+    private function overwrittenByWakeup(ClassInfo $class, MethodInfo $method, ArgInfo $arg): bool
+    {
+        if (strcasecmp($method->name, '__wakeup') === 0) {
+            return false;
+        }
+        $name = $arg->targetProperty();
+        if ($name === null) {
+            return false;
+        }
+        $wakeup = $this->effectiveMethod($class, '__wakeup');
+        if ($wakeup === null) {
+            return false;
+        }
+        return in_array($name, $wakeup->constantProperties, true);
+    }
+
     /**
      * sink 实参是否可控。
      *
@@ -545,9 +613,48 @@ final class ChainFinder
         if ($arg->isControllable()) {
             return true;
         }
+        // __call 的 $args[k]：第 k 个实参
+        if ($arg->kind === ArgInfo::ARG_ELEMENT) {
+            if ($edges === [] || $depth > 12) {
+                return false;
+            }
+            $path = $arg->path();
+            $index = (int) ($path[0] ?? 0);
+            $edge = $edges[count($edges) - 1];
+            $mapped = $edge->argMapping[$index] ?? null;
+            if ($mapped === null) {
+                return false;
+            }
+            return $this->argControllable($mapped, $edge->fromMethod, array_slice($edges, 0, -1), $depth + 1);
+        }
+
         if ($arg->kind === ArgInfo::PARAM_ELEMENT) {
-            // 入口魔术方法的参数数组本身就是反序列化数据
-            return $edges === [] && $arg->name !== null && $method->paramNamed($arg->name) !== null;
+            if ($arg->name === null || $method->paramNamed($arg->name) === null) {
+                return false;
+            }
+
+            // __unserialize 的 $data 就是反序列化数据本身
+            if (strcasecmp($method->name, '__unserialize') === 0) {
+                return $edges === [];
+            }
+
+            // __call 的 $args 数组由调用点的实参组成
+            if ($edges === []) {
+                return true;
+            }
+            if ($depth > 12) {
+                return false;
+            }
+
+            $edge = $edges[count($edges) - 1];
+            $path = $arg->path();
+            $index = (int) ($path[0] ?? 0);
+            $mapped = $edge->argMapping[$index] ?? null;
+            if ($mapped === null) {
+                return false;
+            }
+
+            return $this->argControllable($mapped, $edge->fromMethod, array_slice($edges, 0, -1), $depth + 1);
         }
         if ($arg->kind !== ArgInfo::VARIABLE || $arg->name === null) {
             return false;

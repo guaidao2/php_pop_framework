@@ -14,7 +14,7 @@ use PopChain\Payload\PayloadBuilder;
  */
 final class Application
 {
-    public const VERSION = '1.1.0';
+    public const VERSION = '1.2.0';
 
     private const DEFAULT_ENTRIES = ['__destruct', '__wakeup', '__unserialize'];
 
@@ -97,7 +97,7 @@ final class Application
             return 0;
         }
         if (in_array($command, ['version', '--version', '-v'], true)) {
-            echo 'php-pop-chain ', self::VERSION, "\n";
+            echo 'php_pop_framework ', self::VERSION, "\n";
             return 0;
         }
 
@@ -250,7 +250,7 @@ final class Application
     {
         $version = self::VERSION;
         return <<<TXT
-php-pop-chain v{$version} — PHP deserialization POP chain generator
+php_pop_framework v{$version} — PHP deserialization POP chain generator
 Author: guaidao2 & coolmoon    License: MIT
 
 Usage:
@@ -292,7 +292,7 @@ TXT;
     {
         $version = self::VERSION;
         return <<<TXT
-php-pop-chain v{$version} — PHP 反序列化 POP 链自动生成器
+php_pop_framework v{$version} — PHP 反序列化 POP 链自动生成器
 作者: guaidao2 & coolmoon   协议: MIT
 
 用法:
@@ -388,7 +388,7 @@ TXT;
 
         if (self::option($options, 'json', false)) {
             echo json_encode([
-                'tool' => 'php-pop-chain',
+                'tool' => 'php_pop_framework',
                 'version' => self::VERSION,
                 'path' => $label,
                 'classes' => $rows,
@@ -498,7 +498,7 @@ TXT;
         $outputFile = self::option($options, 'output');
         if (is_string($outputFile) && $outputFile !== '') {
             $content = self::option($options, 'json', false)
-                ? json_encode(['tool' => 'php-pop-chain', 'version' => self::VERSION, 'path' => $label, 'chains' => $records], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
+                ? json_encode(['tool' => 'php_pop_framework', 'version' => self::VERSION, 'path' => $label, 'chains' => $records], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
                 : implode("\n", array_column($records, 'payload'));
             if (@file_put_contents($outputFile, $content . "\n") === false) {
                 fwrite(STDERR, '[!] ' . self::t('output_failed', ['file' => $outputFile]) . "\n");
@@ -509,7 +509,7 @@ TXT;
 
         if (self::option($options, 'json', false)) {
             echo json_encode([
-                'tool' => 'php-pop-chain',
+                'tool' => 'php_pop_framework',
                 'version' => self::VERSION,
                 'path' => $label,
                 'chains' => $records,

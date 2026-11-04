@@ -16,6 +16,7 @@ final class MethodInfo
         public bool $magic = false,
         public string $declaringClass = '',
         public array $stringUses = [],
+        public array $constantProperties = [],
     ) {
     }
 

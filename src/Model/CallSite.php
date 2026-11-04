@@ -14,6 +14,7 @@ final class CallSite
     public const STATIC_CALL = 'static';           // Foo::m(...)
     public const NEW_OBJECT = 'new';               // new Foo(...)
     public const PROPERTY_GET = 'property_get';    // $this->prop->name 读取 → __get
+    public const CALLABLE_ARRAY_INVOKE = 'callable_array_invoke'; // [$this->obj, 'm'](...)
     public const PROPERTY_ISSET = 'property_isset'; // isset($this->prop->name) → __isset
 
     /** @param list<ArgInfo> $args */
@@ -43,6 +44,7 @@ final class CallSite
             self::STATIC_CALL => ($this->target ?? '?') . '::(...)',
             self::NEW_OBJECT => 'new ' . ($this->target ?? '?') . '(...)',
             self::PROPERTY_GET => '$this->' . ($this->receiverName ?? '?') . '->' . ($this->target ?? '?'),
+            self::CALLABLE_ARRAY_INVOKE => '[$this->' . ($this->receiverName ?? '?') . ", '" . ($this->target ?? '?') . "'](...)",
             self::PROPERTY_ISSET => 'isset($this->' . ($this->receiverName ?? '?') . '->' . ($this->target ?? '?') . ')',
             default => $this->raw ?? 'call',
         };

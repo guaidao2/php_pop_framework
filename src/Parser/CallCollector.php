@@ -41,13 +41,19 @@ final class CallCollector extends NodeVisitorAbstract
     /** @var array<string, true> 被显式赋了常量的属性（之后不再可控） */
     private array $constProps = [];
 
+    /** @return list<string> 本方法内被显式赋成字面量的属性名 */
+    public function constantProperties(): array
+    {
+        return array_keys($this->constProps);
+    }
+
     /** @var array<string, true> 当前方法的参数名（小写） */
     private array $params = [];
 
     private Standard $printer;
 
     /** @param list<string> $paramNames */
-    public function __construct(array $paramNames = [])
+    public function __construct(array $paramNames = [], private ?string $methodName = null)
     {
         $this->printer = new Standard();
         foreach ($paramNames as $name) {
@@ -120,6 +126,12 @@ final class CallCollector extends NodeVisitorAbstract
         }
         $name = $node->name;
 
+        // $fn(...) / $fn = $this->cb 这类变量函数
+        if ($name instanceof Expr\Variable && is_string($name->name)) {
+            $this->collectVariableCall($node, $name->name);
+            return;
+        }
+
         if ($name instanceof Name) {
             $target = ltrim($name->toString(), '\\');
             $args = $this->args($node->args);
@@ -146,6 +158,55 @@ final class CallCollector extends NodeVisitorAbstract
                 receiverKind: ArgInfo::THIS_PROPERTY,
                 receiverName: $this->propertyName($name),
                 raw: $this->printer->prettyPrintExpr($node),
+            );
+        }
+    }
+
+    /**
+     * 变量函数调用：$fn(...)，$fn 可能来自属性、局部变量或字符串常量。
+     */
+    private function collectVariableCall(Expr\FuncCall $node, string $variable): void
+    {
+        $info = $this->resolveVariable($variable, '');
+        $args = $this->args($node->args);
+        $line = $node->getStartLine();
+        $raw = $this->printer->prettyPrintExpr($node);
+
+        if ($info->kind === ArgInfo::THIS_PROPERTY && $info->name !== null) {
+            $this->calls[] = new CallSite(
+                kind: CallSite::CALL_PROPERTY,
+                target: $info->name,
+                args: $args,
+                line: $line,
+                receiverKind: ArgInfo::THIS_PROPERTY,
+                receiverName: $info->name,
+                raw: $raw,
+            );
+            return;
+        }
+
+        // $fn = [$this->obj, 'method']; $fn(...)
+        if ($info->kind === ArgInfo::CALLABLE_ARRAY && $info->name !== null) {
+            $this->calls[] = new CallSite(
+                kind: CallSite::CALLABLE_ARRAY_INVOKE,
+                target: is_string($info->literal) ? $info->literal : null,
+                args: $args,
+                line: $line,
+                receiverKind: ArgInfo::THIS_PROPERTY,
+                receiverName: $info->name,
+                raw: $raw,
+            );
+            return;
+        }
+
+        // $fn = 'system'; $fn($x)
+        if ($info->kind === ArgInfo::STRING && is_string($info->literal)) {
+            $this->calls[] = new CallSite(
+                kind: CallSite::FUNCTION_CALL,
+                target: ltrim($info->literal, '\\'),
+                args: $args,
+                line: $line,
+                raw: $raw,
             );
         }
     }
@@ -266,12 +327,17 @@ final class CallCollector extends NodeVisitorAbstract
 
         if ($this->isThisProperty($node->var)) {
             $name = $this->propertyName($node->var);
+
+            // 被显式赋成字面量之后，这个属性确定不可控
+            if ($info->isLiteral()) {
+                unset($this->propTaint[$name]);
+                $this->constProps[$name] = true;
+                return;
+            }
+
             $this->storeTaint($this->propTaint, $name, $info);
             if (isset($this->propTaint[$name])) {
                 unset($this->constProps[$name]);
-            } elseif ($info->isLiteral()) {
-                // 只有显式赋成字面量之后，这个属性才确定不可控
-                $this->constProps[$name] = true;
             } else {
                 // 来源未知（如 $data['x']）时保持默认的"可控"
                 unset($this->constProps[$name]);
@@ -284,7 +350,8 @@ final class CallCollector extends NodeVisitorAbstract
     {
         $keep = $info->isControllable()
             || $info->kind === ArgInfo::VARIABLE
-            || $info->kind === ArgInfo::CONCAT;
+            || $info->kind === ArgInfo::CONCAT
+            || $info->isLiteral();
 
         if ($keep && $name !== 'this') {
             $map[$name] = $info;
@@ -386,20 +453,10 @@ final class CallCollector extends NodeVisitorAbstract
             return $this->resolveVariable($value->name, $raw);
         }
 
-        // 入口魔术方法的参数数组：$data['cmd'] 也来自反序列化数据
-        if ($value instanceof Expr\ArrayDimFetch
-            && $value->var instanceof Expr\Variable
-            && is_string($value->var->name)
-            && isset($this->params[strtolower($value->var->name)])) {
-            $key = null;
-            if ($value->dim instanceof Scalar\String_) {
-                $key = $value->dim->value;
-            } elseif ($value->dim instanceof Scalar\Int_) {
-                $key = (string) $value->dim->value;
-            }
-            if ($key !== null) {
-                return new ArgInfo(ArgInfo::PARAM_ELEMENT, $value->var->name, $raw, $key);
-            }
+        // 入口魔术方法的参数数组：$data['cmd'] / $data['a']['b'] 也来自反序列化数据
+        $parameterElement = $this->parameterElement($value);
+        if ($parameterElement !== null) {
+            return $parameterElement;
         }
 
         if ($value instanceof Expr\BinaryOp\Concat) {
@@ -501,6 +558,9 @@ final class CallCollector extends NodeVisitorAbstract
         }
 
         $source = $this->propTaint[$name];
+        if ($source->isLiteral()) {
+            return new ArgInfo(ArgInfo::EXPR, null, '$this->' . $name);
+        }
         if ($source->kind === ArgInfo::THIS_PROPERTY) {
             return $this->propertyArg((string) $source->name, $raw, $depth + 1);
         }
@@ -528,6 +588,12 @@ final class CallCollector extends NodeVisitorAbstract
             if ($taint->kind === ArgInfo::VARIABLE && $taint->name !== null) {
                 $current = $taint->name;
                 continue;
+            }
+            if ($taint->isLiteral()) {
+                return new ArgInfo($taint->kind, null, $raw, $taint->literal);
+            }
+            if ($taint->kind === ArgInfo::CALLABLE_ARRAY) {
+                return new ArgInfo(ArgInfo::CALLABLE_ARRAY, $taint->name, $raw, $taint->literal);
             }
             break;
         }
@@ -580,6 +646,48 @@ final class CallCollector extends NodeVisitorAbstract
             }
         }
         return false;
+    }
+
+    /**
+     * 把 $data['a']['b'] 解析成 PARAM_ELEMENT（路径 ['a', 'b']）。
+     */
+    private function parameterElement(Node $value): ?ArgInfo
+    {
+        $path = [];
+        $current = $value;
+        while ($current instanceof Expr\ArrayDimFetch) {
+            $key = null;
+            if ($current->dim instanceof Scalar\String_) {
+                $key = $current->dim->value;
+            } elseif ($current->dim instanceof Scalar\Int_) {
+                $key = $current->dim->value;
+            }
+            if ($key === null) {
+                return null;
+            }
+            $path[] = $key;
+            $current = $current->var;
+        }
+
+        if ($path === [] || !$current instanceof Expr\Variable || !is_string($current->name)) {
+            return null;
+        }
+        if (!isset($this->params[strtolower($current->name)])) {
+            return null;
+        }
+
+        $path = array_reverse($path);
+        $literal = count($path) === 1 ? $path[0] : $path;
+        $raw = $this->printer->prettyPrintExpr($value);
+        $method = strtolower((string) $this->methodName);
+
+        if ($method === '__unserialize') {
+            return new ArgInfo(ArgInfo::PARAM_ELEMENT, $current->name, $raw, $literal);
+        }
+        if ($method === '__call' || $method === '__callstatic') {
+            return new ArgInfo(ArgInfo::ARG_ELEMENT, $current->name, $raw, $literal);
+        }
+        return null;
     }
 
     private function isThisProperty(Node $node): bool
