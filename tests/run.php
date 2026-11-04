@@ -34,7 +34,10 @@ function chainsByEntry(array $chains): array
 {
     $map = [];
     foreach ($chains as $chain) {
-        $map[$chain->entryClass->shortName()] = $chain;
+        $name = $chain->entryClass->shortName();
+        if (!isset($map[$name]) || count($chain->edges) < count($map[$name]->edges)) {
+            $map[$name] = $chain;
+        }
     }
     return $map;
 }
@@ -470,6 +473,24 @@ unset($guardObject);
 gc_collect_cycles();
 $guardOutput = (string) ob_get_clean();
 check('守卫条件满足后 payload 真实执行', str_contains($guardOutput, 'GUARD_OK'), $guardOutput);
+
+$guardCases = [
+    'GuardEarlyEntry' => ['s:3:"ttl";i:1;', 'GUARD_EARLY_OK'],
+    'GuardIssetEntry' => ['s:4:"flag";', 'GUARD_ISSET_OK'],
+    'GuardArrayEntry' => ['s:3:"arr";a:0:{}', 'GUARD_ARRAY_OK'],
+    'GuardNotEqualEntry' => ['debug_x', 'GUARD_NOT_OK'],
+    'GuardTruthyEntry' => ['s:7:"enabled";s:1:"x";', 'GUARD_TRUTHY_OK'],
+];
+foreach ($guardCases as $entry => [$fragment, $marker]) {
+    $built = (new PayloadBuilder($guard))->build($guardByEntry[$entry], 'echo ' . $marker);
+    check($entry . ' 写入守卫要求', str_contains($built, $fragment), $built);
+    ob_start();
+    $object = @unserialize($built);
+    unset($object);
+    gc_collect_cycles();
+    $output = (string) ob_get_clean();
+    check($entry . ' payload 真实执行', str_contains($output, $marker), $output);
+}
 
 echo "== payload 编码输出 ==\n";
 ob_start();

@@ -41,15 +41,6 @@ final class CallCollector extends NodeVisitorAbstract
     /** @var array<string, true> 被显式赋了常量的属性（之后不再可控） */
     private array $constProps = [];
 
-    /** @var array<string, mixed> 进入这个方法（按条件分支继续）所必需的属性值 */
-    private array $preconditions = [];
-
-    /** @return array<string, mixed> */
-    public function preconditions(): array
-    {
-        return $this->preconditions;
-    }
-
     /** @return list<string> 本方法内被显式赋成字面量的属性名 */
     public function constantProperties(): array
     {
@@ -78,12 +69,7 @@ final class CallCollector extends NodeVisitorAbstract
 
         if ($node instanceof Expr\Assign) {
             $this->collectAssign($node);
-        } elseif ($node instanceof Expr\BinaryOp\Identical || $node instanceof Expr\BinaryOp\Equal) {
-            $this->collectComparison($node);
-        } elseif ($node instanceof Expr\Ternary) {
-            $this->collectTruthiness($node->cond);
-        } elseif ($node instanceof Expr\BooleanNot) {
-            $this->collectTruthiness($node->expr, false);
+
         } elseif ($node instanceof Expr\FuncCall) {
             $this->collectFuncCall($node);
         } elseif ($node instanceof Expr\MethodCall || $node instanceof Expr\NullsafeMethodCall) {
@@ -701,58 +687,6 @@ final class CallCollector extends NodeVisitorAbstract
         }
         if ($method === '__call' || $method === '__callstatic') {
             return new ArgInfo(ArgInfo::ARG_ELEMENT, $current->name, $raw, $literal);
-        }
-        return null;
-    }
-
-    /** if ($this->prop === 'literal') 这类条件：payload 必须把这个属性填成对应值。 */
-    private function collectComparison(Node $node): void
-    {
-        $pairs = [[$node->left, $node->right], [$node->right, $node->left]];
-        foreach ($pairs as [$propertyNode, $literalNode]) {
-            if (!$this->isThisProperty($propertyNode)) {
-                continue;
-            }
-            $value = $this->literalValue($literalNode);
-            if ($value === null) {
-                continue;
-            }
-            $this->preconditions[$this->propertyName($propertyNode)] = $value['value'];
-        }
-    }
-
-    /** 属性直接作为条件（if ($this->flag) / if (!$this->flag)）时必须为真/假。 */
-    private function collectTruthiness(Node $node, bool $expected = true): void
-    {
-        if (!$this->isThisProperty($node)) {
-            return;
-        }
-        $this->preconditions[$this->propertyName($node)] = $expected;
-    }
-
-    /** 只识别编译期可确定的字面量；null 表示不是可识别的字面量。 */
-    private function literalValue(Node $node): ?array
-    {
-        if ($node instanceof Scalar\String_) {
-            return ['value' => $node->value];
-        }
-        if ($node instanceof Scalar\Int_) {
-            return ['value' => $node->value];
-        }
-        if ($node instanceof Scalar\Float_) {
-            return ['value' => $node->value];
-        }
-        if ($node instanceof Expr\ConstFetch) {
-            $name = strtolower($node->name->toString());
-            if ($name === 'true') {
-                return ['value' => true];
-            }
-            if ($name === 'false') {
-                return ['value' => false];
-            }
-            if ($name === 'null') {
-                return ['value' => null];
-            }
         }
         return null;
     }

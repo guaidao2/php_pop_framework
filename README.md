@@ -182,7 +182,7 @@ The payload is assembled straight into PHP's serialization format by `src/Payloa
 - Trait conflict adaptation: `insteadof` chooses the winning method, `as` adds aliases or changes visibility
 - `__wakeup` literal resets are detected at every nesting depth. When a chain depends on a property that `__wakeup` overwrites, the generated payload deliberately declares more properties than the class actually has so `unserialize()` fails at that object: `__wakeup` is skipped while the already-built objects are still destructed (CVE-2016-7124-style bypass), and the CLI marks the chain with a note. Classes that define `__unserialize` are handled separately (PHP does not call `__wakeup` for them)
 - Argument backtracking: when a sink argument comes from a method parameter, trace it back along the call chain to the property that ultimately has to be assigned; constant arguments at the call site are reported as not controllable instead of producing a chain
-- Guard conditions: literal comparisons on `$this` properties (`$this->is_admin === true`, `$this->token === 'admin_token'`, `if (!$this->flag)`) are detected while walking the chain and written into the payload, so branches guarded by those checks actually run
+- Guard conditions: while walking a chain, the tool collects what the properties must satisfy for the guarded code to run and writes those values into the payload. Covered: equality / inequality and ordering comparisons with literals (`$this->is_admin === true`, `$this->token === 'admin_token'`, `$this->ttl <= 0`), `isset` / `empty`, type checks (`is_array`, `is_string`, `is_int`, `is_float`, `is_bool`, `is_null`, `is_numeric`, `is_iterable`), plain truthiness (`if ($this->flag)` / `if (!$this->flag)`), early-return guards (`if (...) { return; }`) and else branches
 - `__unserialize(array $data)` entries: `$data['cmd']` reads are treated as attacker-controlled data, both when assigned to a property and when passed straight to a sink
 - Sink categories: RCE, file read/write/delete/move, file inclusion, deserialization, callable, environment, variable injection, and more
 - Payload output: textual chain paths, JSON (with tool name and version), payloads written to disk; NUL bytes are escaped on screen while `--output` keeps the raw bytes
@@ -197,6 +197,7 @@ Static analysis cannot cover every dynamic feature PHP offers. The current versi
 - Control-flow reachability (`if` conditions, exception paths, loop counts)
 - `preg_replace_callback`: the callback receives a matches array rather than plain elements, so parameters are not mapped
 - Sink arguments that combine several different properties: only the first controllable property is written into the payload
+- Guard conditions computed from function return values, arithmetic, regex results or nested array access are not solved; only literal/type comparisons are modelled
 - Gadgets whose magic methods depend on runtime-created state (open handles, live database connections, loaded extensions) cannot be reproduced by property injection alone
 - Anonymous classes cannot be instantiated by `unserialize`, so they are intentionally skipped rather than modelled
 

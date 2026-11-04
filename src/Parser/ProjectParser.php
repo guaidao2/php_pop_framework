@@ -294,7 +294,7 @@ final class ProjectParser
             declaringClass: $declaringClass,
             stringUses: $stringUses,
             constantProperties: $collector?->constantProperties() ?? [],
-            preconditions: $collector?->preconditions() ?? [],
+            preconditions: (new GuardCollector())->collect($node->stmts),
         );
     }
 

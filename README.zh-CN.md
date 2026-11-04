@@ -182,7 +182,7 @@ payload 由 `src/Payload/Serializer.php` 直接按 PHP 序列化格式拼接，*
 - trait 冲突适配：`insteadof` 选中覆盖方，`as` 支持别名与可见性修改
 - `__wakeup` 对属性的字面量重置会在任意嵌套深度上被识别；依赖这类属性的链，生成的 payload 会故意把声明属性数写得比类实际属性多、body 少给，让 `unserialize()` 在该对象处失败：`__wakeup` 被跳过、已构造对象的析构函数照跑（CVE-2016-7124 式绕过），CLI 会打印提示。定义了 `__unserialize` 的类按 PHP 语义单独处理（此时不会调用 `__wakeup`）
 - 参数回溯：sink 参数来自方法参数时，沿调用链反推最终要赋值的属性；调用点传的是常量时按不可控处理，不会产出没有 sink 值的链
-- 守卫条件：沿链遇到 `$this->is_admin === true`、`$this->token === 'admin_token'`、`if (!$this->flag)` 这类字面量比较时，会把对应属性值写进 payload，被守卫包住的代码分支才会真的执行
+- 守卫条件：沿链收集"要走通被守卫的代码，属性必须满足什么"，并写进 payload。覆盖：与字面量的相等 / 不等 / 大小比较（`$this->is_admin === true`、`$this->token === 'admin_token'`、`$this->ttl <= 0`）、`isset` / `empty`、类型判断（`is_array`、`is_string`、`is_int`、`is_float`、`is_bool`、`is_null`、`is_numeric`、`is_iterable`）、真假判断（`if ($this->flag)` / `if (!$this->flag)`）、早退守卫（`if (...) { return; }`）以及 else 分支
 - `__unserialize(array $data)` 入口：`$data['cmd']` 视为攻击者可控数据，赋给属性后进 sink、或直接作为 sink 实参都能出链
 - sink 分类：RCE、文件读写/删除/移动、文件包含、反序列化、可调用、环境、变量注入等
 - payload 输出：文本链路径、JSON（带工具名与版本）、payload 落盘；终端里 NUL 字节转义显示，`--output` 仍写原始字节
@@ -197,6 +197,7 @@ payload 由 `src/Payload/Serializer.php` 直接按 PHP 序列化格式拼接，*
 - 控制流可达性（`if` 条件、异常路径、循环次数）
 - `preg_replace_callback`：回调拿到的是匹配数组而不是普通元素，不建立形参映射
 - sink 参数涉及多个不同属性时，只把第一个可控属性写入 payload
+- 靠函数返回值、算术、正则结果或多维数组下标算出来的守卫条件不建模，只处理字面量 / 类型比较
 - 魔术方法依赖运行时状态（已打开的资源句柄、活动的数据库连接、已加载扩展）的 gadget，仅靠属性注入无法复现
 - 匿名类无法被 `unserialize` 实例化，因此有意跳过而不是建模
 

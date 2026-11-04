@@ -38,3 +38,78 @@ class GuardSettings
         return 'Access Denied';
     }
 }
+
+// 早退式守卫：ttl <= 0 时直接返回，所以要走到 sink 必须 ttl > 0
+class GuardEarlyEntry
+{
+    public $ttl = 0;
+    public $cmd;
+
+    public function __destruct()
+    {
+        if ($this->ttl <= 0) {
+            return;
+        }
+        system($this->cmd);
+    }
+}
+
+// isset 守卫：没有 flag 就直接返回
+class GuardIssetEntry
+{
+    public $flag;
+    public $cmd;
+
+    public function __destruct()
+    {
+        if (!isset($this->flag)) {
+            return;
+        }
+        system($this->cmd);
+    }
+}
+
+// 类型守卫：必须是数组
+class GuardArrayEntry
+{
+    public $arr;
+    public $cmd;
+
+    public function __destruct()
+    {
+        if (!is_array($this->arr)) {
+            return;
+        }
+        system($this->cmd);
+    }
+}
+
+// 不等于守卫：mode === 'debug' 时返回
+class GuardNotEqualEntry
+{
+    public $mode = 'debug';
+    public $cmd;
+
+    public function __destruct()
+    {
+        if ($this->mode === 'debug') {
+            return;
+        }
+        system($this->cmd);
+    }
+}
+
+// 属性直接作为条件
+class GuardTruthyEntry
+{
+    public $enabled = false;
+    public $cmd;
+
+    public function __destruct()
+    {
+        if (!$this->enabled) {
+            return;
+        }
+        system($this->cmd);
+    }
+}
