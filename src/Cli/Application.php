@@ -5,6 +5,9 @@ namespace PopChain\Cli;
 
 use PopChain\Analysis\ChainFinder;
 use PopChain\Analysis\SinkScanner;
+use PopChain\Detector\DetectorRegistry;
+use PopChain\Engine\ExternalEngine;
+use PopChain\Engine\NullEngine;
 use PopChain\Model\Chain;
 use PopChain\Parser\ProjectParser;
 use PopChain\Payload\PayloadBuilder;
@@ -14,7 +17,7 @@ use PopChain\Payload\PayloadBuilder;
  */
 final class Application
 {
-    public const VERSION = '1.5.0';
+    public const VERSION = '2.0.0';
 
     private const DEFAULT_ENTRIES = ['__destruct', '__wakeup', '__unserialize'];
 
@@ -25,7 +28,7 @@ final class Application
     ];
 
     /** 不带值的布尔选项。 */
-    private const BOOLEAN_OPTIONS = ['json', 'stdin', 'include-vendor', 'obfuscate', 'help', 'version'];
+    private const BOOLEAN_OPTIONS = ['json', 'stdin', 'include-vendor', 'obfuscate', 'list-types', 'help', 'version'];
 
     /** 必须是正整数的选项。 */
     private const NUMERIC_OPTIONS = ['max-depth', 'max-chains'];
@@ -86,6 +89,9 @@ final class Application
             'not_raw_source' => 'URL returned an HTML page instead of raw PHP source: {url} (the page probably executes PHP or uses highlight_file)',
             'html_source_extracted' => '[i] URL looks like highlighted PHP source; extracted the source code from the HTML',
             'bad_encode' => '--encode only accepts url or base64, got: {value}',
+            'available_types' => 'Available detection types:',
+            'unknown_type' => 'Unknown detection type: {type}. Available: {types}',
+            'engine_infeasible' => 'engine marked chain as infeasible, skipped: {entry}',
             'path_missing' => 'Path not found: {path}',
             'bad_numeric' => '--{option} must be a positive integer, got: {value}',
             'no_classes' => 'No PHP classes found in: {path}',
@@ -114,6 +120,9 @@ final class Application
             'not_raw_source' => 'URL 返回的是 HTML 页面，不是 PHP 源码: {url}（页面可能执行了 PHP，或用了 highlight_file）',
             'html_source_extracted' => '[i] URL 看起来是高亮后的 PHP 源码页，已从 HTML 里提取出源代码',
             'bad_encode' => '--encode 只接受 url 或 base64，当前值: {value}',
+            'available_types' => '可用的检测类型:',
+            'unknown_type' => '未知检测类型: {type}，可用: {types}',
+            'engine_infeasible' => '引擎判定链不可行，已跳过: {entry}',
             'path_missing' => '路径不存在: {path}',
             'bad_numeric' => '--{option} 必须是正整数，当前值: {value}',
             'no_classes' => '没有在 {path} 里找到 PHP 类',
@@ -135,6 +144,14 @@ final class Application
         self::$lang = self::resolveLang($options);
 
         $command = $positional[0] ?? 'help';
+
+        if (isset($options['list-types'])) {
+            echo self::t('available_types'), "\n";
+            foreach (DetectorRegistry::describe() as $name => $description) {
+                echo '  ', $name, '  ', $description, "\n";
+            }
+            return 0;
+        }
 
         if (in_array($command, ['help', '--help', '-h'], true)) {
             self::help();
@@ -370,9 +387,13 @@ Options:
   --max-chains=50      Maximum number of chains
   --include-vendor     Also scan vendor/
   --json               JSON output
+  --type=deserialization  Detection type to run (see --list-types)
+  --list-types         List available detection types and exit
   --obfuscate          Emit strings as S: hex escapes, hiding keywords from regex filters
   --encode=url|base64  Encode the payload for copy/paste: url for ?data=, base64 for log-safe text
                        (--output writes the encoded form as well)
+  --engine-cmd=cmd     External symbolic-execution engine: JSON request on stdin, JSON response on stdout
+  --engine-timeout=sec Engine timeout in seconds (default: 10)
 
 Examples:
   popchain scan ./src
@@ -426,9 +447,13 @@ php_pop_framework v{$version} — PHP 反序列化 POP 链自动生成器
   --max-chains=50      最多输出多少条链
   --include-vendor     连 vendor/ 目录一起扫描
   --json               以 JSON 输出
+  --type=deserialization  要运行的检测类型（见 --list-types）
+  --list-types         列出可用检测类型后退出
   --obfuscate          字符串改用 S: 十六进制转义，绕过关键字过滤
   --encode=url|base64  payload 直接编码成可直接粘贴的形式：url 用于 ?data=，base64 便于文本传输
                        （--output 也写编码后的形式）
+  --engine-cmd=命令    外部符号执行引擎：stdin 收 JSON 请求，stdout 回 JSON 响应
+  --engine-timeout=秒  引擎超时时间（默认 10 秒）
 
 示例:
   popchain scan ./src
@@ -553,13 +578,41 @@ TXT;
         }
 
         $entries = self::entries($options);
+        $type = strtolower((string) self::option($options, 'type', 'deserialization'));
 
-        $finder = new ChainFinder($classes, new SinkScanner());
-        $chains = $finder->find(
-            $entries,
-            (int) self::option($options, 'max-depth', 8),
-            (int) self::option($options, 'max-chains', 50),
-        );
+        $engineCommand = self::option($options, 'engine-cmd');
+        $engine = is_string($engineCommand) && $engineCommand !== ''
+            ? new ExternalEngine($engineCommand, (float) self::option($options, 'engine-timeout', 10))
+            : new NullEngine();
+
+        $detector = DetectorRegistry::create($type, $engine);
+        if ($detector === null) {
+            fwrite(STDERR, '[!] ' . self::t('unknown_type', [
+                'type' => $type,
+                'types' => implode(', ', DetectorRegistry::names()),
+            ]) . "\n");
+            return 2;
+        }
+
+        $findings = $detector->detect($classes, [
+            'entries' => $entries,
+            'max_depth' => (int) self::option($options, 'max-depth', 8),
+            'max_chains' => (int) self::option($options, 'max-chains', 50),
+        ]);
+
+        $chains = [];
+        $findingNotes = [];
+        foreach ($findings as $finding) {
+            if ($finding->chain === null) {
+                continue;
+            }
+            if (!$finding->feasible) {
+                fwrite(STDERR, '[!] ' . self::t('engine_infeasible', ['entry' => $finding->title]) . "\n");
+                continue;
+            }
+            $chains[] = $finding->chain;
+            $findingNotes[$finding->chain->signature()] = $finding->notes;
+        }
 
         $classFilter = self::option($options, 'class');
         if (is_string($classFilter) && $classFilter !== '') {
@@ -611,6 +664,7 @@ TXT;
                 'payload_encoded' => $encodedPayload,
                 'payload_complete' => $builder->sinkValueWritten,
                 'needs_wakeup_bypass' => $builder->wakeupBypassUsed,
+                'engine_notes' => $findingNotes[$chain->signature()] ?? [],
             ];
         }
 
@@ -659,6 +713,9 @@ TXT;
             }
             if ($record['needs_wakeup_bypass']) {
                 echo '    ', self::t('wakeup_bypass'), "\n";
+            }
+            foreach ($record['engine_notes'] as $engineNote) {
+                echo '    ', $engineNote, "\n";
             }
             foreach ($record['edges'] as $edge) {
                 printf(

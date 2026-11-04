@@ -57,11 +57,39 @@ final class PayloadBuilder
         }
 
         $this->applyPreconditions($chain, $nodes, $fromNode);
+        $this->applyEngineAssignments($chain, $nodes);
         $this->fillArraySlots($chain, $nodes, $fromNode);
         $this->applySinkValue($chain, $nodes, $fromNode, $current, $value);
         $this->padWakeupBlockedNodes($nodes);
 
         return (new Serializer($this->obfuscate))->serializeNode($nodes[0]);
+    }
+
+    /**
+     * 把符号执行引擎给出的属性赋值写进对应节点（入口类或链上任意类）。
+     *
+     * @param array<int, PayloadNode> $nodes
+     */
+    private function applyEngineAssignments(Chain $chain, array $nodes): void
+    {
+        foreach ($chain->engineAssignments as $assignment) {
+            $className = (string) ($assignment['class'] ?? '');
+            $property = (string) ($assignment['property'] ?? '');
+            if ($className === '' || $property === '') {
+                continue;
+            }
+            foreach ($nodes as $node) {
+                if (strcasecmp($node->class, $className) !== 0) {
+                    continue;
+                }
+                $class = $this->classes[$node->class] ?? null;
+                if ($class === null) {
+                    continue;
+                }
+                $this->setProperty($node, $class, $property, $assignment['value'] ?? null);
+                break;
+            }
+        }
     }
 
     /**

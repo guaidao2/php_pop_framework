@@ -18,6 +18,7 @@ final class MethodInfo
         public array $stringUses = [],
         public array $constantProperties = [],
         public array $preconditions = [],
+        public ?\PopChain\Ir\MethodCfg $cfg = null,
     ) {
     }
 

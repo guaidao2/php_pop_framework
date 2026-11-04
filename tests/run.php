@@ -6,6 +6,7 @@ require __DIR__ . '/../src/bootstrap.php';
 use PopChain\Analysis\ChainFinder;
 use PopChain\Analysis\SinkScanner;
 use PopChain\Cli\Application;
+use PopChain\Detector\DetectorRegistry;
 use PopChain\Model\ArgInfo;
 use PopChain\Model\CallSite;
 use PopChain\Model\Chain;
@@ -509,6 +510,55 @@ ob_start();
 $exit = Application::run(['popchain', 'find', __DIR__ . '/fixtures/private_collision_demo.php', '--encode=nope']);
 ob_end_clean();
 check('非法 --encode 退出码为 2', $exit === 2, 'exit=' . $exit);
+
+echo "== CFG 与插件接口 ==\n";
+$irClasses = (new ProjectParser())->parsePath(__DIR__ . '/fixtures/guard_demo.php');
+$earlyCfg = $irClasses['GuardEarlyEntry']->method('__destruct')->cfg;
+check('方法生成了语句级 CFG', $earlyCfg !== null && count($earlyCfg->nodes()) >= 5, $earlyCfg === null ? 'null' : (string) count($earlyCfg->nodes()));
+
+$cfgKinds = [];
+$cfgLabels = [];
+foreach ($earlyCfg?->nodes() ?? [] as $cfgNode) {
+    $cfgKinds[] = $cfgNode->kind;
+    foreach ($cfgNode->successors as $successor) {
+        $cfgLabels[] = $successor['label'];
+    }
+}
+check('CFG 含 condition / return 节点', in_array('condition', $cfgKinds, true) && in_array('return', $cfgKinds, true), implode(',', $cfgKinds));
+check('条件节点带 true / false 边', in_array('true', $cfgLabels, true) && in_array('false', $cfgLabels, true), implode(',', array_map(static fn ($l) => (string) $l, $cfgLabels)));
+check('CFG 可序列化成 JSON', json_decode((string) json_encode($earlyCfg->toArray()), true) !== null);
+
+check('检测器注册表包含 deserialization', in_array('deserialization', DetectorRegistry::names(), true));
+check('未知检测器返回 null', DetectorRegistry::create('does-not-exist') === null);
+
+ob_start();
+$exit = Application::run(['popchain', '--list-types']);
+$typesOut = ob_get_clean();
+check('--list-types 列出检测类型', $exit === 0 && str_contains($typesOut, 'deserialization'), $typesOut);
+
+ob_start();
+$exit = Application::run(['popchain', 'find', __DIR__ . '/fixtures/guard_demo.php', '--type=does-not-exist']);
+ob_end_clean();
+check('未知检测类型退出码为 2', $exit === 2, 'exit=' . $exit);
+
+$engineCmd = 'php ' . escapeshellarg(__DIR__ . '/fixtures/fake_engine.php');
+ob_start();
+Application::run(['popchain', 'find', __DIR__ . '/fixtures/guard_demo.php', '--engine-cmd=' . $engineCmd]);
+$engineOut = ob_get_clean();
+check('引擎返回 sat 时赋值写进 payload', str_contains($engineOut, 'engine_marker'), $engineOut);
+check('引擎备注显示在输出里', str_contains($engineOut, 'fake engine'), $engineOut);
+
+$badEngine = 'php ' . escapeshellarg(__DIR__ . '/fixtures/fake_engine_bad.php');
+ob_start();
+Application::run(['popchain', 'find', __DIR__ . '/fixtures/guard_demo.php', '--engine-cmd=' . $badEngine]);
+$badEngineOut = ob_get_clean();
+check('引擎输出非法 JSON 时回退启发式', str_contains($badEngineOut, 'payload:'), $badEngineOut);
+
+$unsatEngine = 'php ' . escapeshellarg(__DIR__ . '/fixtures/fake_engine_unsat.php');
+ob_start();
+$exit = Application::run(['popchain', 'find', __DIR__ . '/fixtures/guard_demo.php', '--engine-cmd=' . $unsatEngine]);
+$unsatOut = ob_get_clean();
+check('引擎判定 unsat 时跳过链', !str_contains($unsatOut, 'payload:') && $exit === 1, $unsatOut);
 
 echo "== CLI ==\n";
 ob_start();

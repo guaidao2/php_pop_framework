@@ -98,6 +98,33 @@ Sample `find` output:
     payload: O:5:"Entry":1:{s:8:"callback";O:6:"Runner":2:{...}}
 ```
 
+## Architecture
+
+The project is organized as a framework rather than a single-purpose scanner:
+
+- `src/Parser` turns PHP source into class/method metadata, guard conditions and a
+  statement-level CFG (`src/Ir`);
+- `src/Detector` holds pluggable detectors. `deserialization` is the built-in one;
+  new vulnerability types implement `DetectorInterface` and register in
+  `DetectorRegistry`, after which `--type` / `--list-types` pick them up;
+- `src/Analysis` provides chain search, sink matching and guard collection shared
+  by detectors;
+- `src/Payload` turns a chain into a serialized payload;
+- `src/Engine` is the adapter layer for an optional symbolic-execution backend.
+  The engine is an external process that speaks the JSON protocol described in
+  [docs/symbolic-engine-protocol.md](docs/symbolic-engine-protocol.md). When it is
+  not configured, unavailable, slow, or returns invalid data, the heuristic path
+  is used unchanged and a note is printed.
+
+```
+CLI (--type)
+  └─ Detector registry
+       └─ deserialization detector
+            ├─ ChainFinder + guard constraints
+            ├─ [optional] symbolic engine (CFG + constraints over JSON)
+            └─ PayloadBuilder
+```
+
 ## Commands and options
 
 ```
@@ -132,6 +159,10 @@ popchain version
 | `--json` | Emit JSON |
 | `--obfuscate` | Write strings as `S:` hex escapes so keyword filters do not see them |
 | `--encode=url\|base64` | Encode the payload for direct copy/paste: `url` for a `?data=` query, `base64` for log-safe text; `--output` writes the encoded form too |
+| `--type=deserialization` | Detection type to run, see `--list-types` |
+| `--list-types` | List available detection types and exit |
+| `--engine-cmd=cmd` | External symbolic-execution engine: JSON request on stdin, JSON response on stdout |
+| `--engine-timeout=sec` | Engine timeout in seconds (default 10) |
 
 ## How it works
 
@@ -212,13 +243,17 @@ php_pop_framework/
 ├── src/
 │   ├── bootstrap.php         # dependency probing
 │   ├── Cli/Application.php   # CLI implementation
-│   ├── Parser/               # AST → IR
+│   ├── Parser/               # AST → model + CFG + guard constraints
+│   ├── Ir/                   # statement-level control-flow graph
 │   ├── Model/                # classes/methods/properties/call sites/chains/edges
+│   ├── Detector/             # detector plugins (deserialization first)
+│   ├── Engine/               # optional symbolic-execution engine adapter
 │   ├── Analysis/             # sink detection + chain search
 │   └── Payload/              # object graph → hand-written serialization
 ├── examples/demo.php         # sample vulnerable code
 ├── tests/run.php             # test suite
 ├── tests/fixtures/           # parser/chain fixtures
+├── docs/symbolic-engine-protocol.md  # protocol for the optional engine
 ├── composer.json             # dependency and autoload definition
 ├── README.zh-CN.md           # Chinese documentation
 ├── LICENSE                   # MIT

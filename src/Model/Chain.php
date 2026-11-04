@@ -8,6 +8,9 @@ namespace PopChain\Model;
  */
 final class Chain
 {
+    /** @var list<array{class:string,property:string,value:mixed}> 符号执行引擎给出的属性赋值 */
+    public array $engineAssignments = [];
+
     /** @param list<Edge> $edges */
     public function __construct(
         public ClassInfo $entryClass,

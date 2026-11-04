@@ -283,7 +283,7 @@ final class ProjectParser
         }
 
         $name = $node->name->toString();
-        return new MethodInfo(
+        $method = new MethodInfo(
             name: $name,
             visibility: $this->visibility($node),
             static: $node->isStatic(),
@@ -295,7 +295,10 @@ final class ProjectParser
             stringUses: $stringUses,
             constantProperties: $collector?->constantProperties() ?? [],
             preconditions: (new GuardCollector())->collect($node->stmts),
+            cfg: (new \PopChain\Ir\CfgBuilder())->build($declaringClass, $name, $node->stmts, $node->getStartLine()),
         );
+
+        return $method;
     }
 
     /** trait 适配里的修饰符（0 表示没写可见性）。 */

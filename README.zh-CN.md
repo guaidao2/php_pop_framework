@@ -98,6 +98,29 @@ URL 可以直接是纯 PHP 源码；如果是 `highlight_file` / `highlight_stri
     payload: O:5:"Entry":1:{s:8:"callback";O:6:"Runner":2:{...}}
 ```
 
+## 架构
+
+这个仓库是按框架组织的，不是单用途扫描器：
+
+- `src/Parser` 把 PHP 源码解析成类/方法元数据、守卫条件和语句级 CFG（`src/Ir`）；
+- `src/Detector` 放检测器插件。`deserialization` 是内置的第一个，新增漏洞类型实现
+  `DetectorInterface` 并在 `DetectorRegistry` 注册，CLI 的 `--type` / `--list-types`
+  就会自动带上；
+- `src/Analysis` 提供各检测器共用的链搜索、sink 匹配和守卫收集；
+- `src/Payload` 负责把链变成序列化 payload；
+- `src/Engine` 是可选符号执行后端的适配层。引擎是外部进程，按
+  [docs/symbolic-engine-protocol.md](docs/symbolic-engine-protocol.md) 的 JSON 协议通信；
+  没配置、不可用、超时或返回非法数据时，自动回退到启发式分析并打印提示。
+
+```
+CLI（--type）
+  └─ 检测器注册表
+       └─ 反序列化检测器
+            ├─ ChainFinder + 守卫约束
+            ├─ [可选] 符号执行引擎（JSON 传 CFG 和约束）
+            └─ PayloadBuilder
+```
+
 ## 命令与选项
 
 ```
@@ -132,6 +155,10 @@ popchain version
 | `--json` | 以 JSON 输出 |
 | `--obfuscate` | 字符串改用 `S:` 十六进制转义，关键字不会被过滤器看到 |
 | `--encode=url\|base64` | payload 直接编码，方便复制粘贴：`url` 用于 `?data=`，`base64` 便于文本传输；`--output` 也写编码后的形式 |
+| `--type=deserialization` | 要运行的检测类型，见 `--list-types` |
+| `--list-types` | 列出可用检测类型后退出 |
+| `--engine-cmd=命令` | 外部符号执行引擎：stdin 收 JSON 请求，stdout 回 JSON 响应 |
+| `--engine-timeout=秒` | 引擎超时时间（默认 10 秒） |
 
 ## 工作原理
 
@@ -212,13 +239,17 @@ php_pop_framework/
 ├── src/
 │   ├── bootstrap.php         # 依赖探测
 │   ├── Cli/Application.php   # CLI 实现
-│   ├── Parser/               # AST → IR
+│   ├── Parser/               # AST → 模型 + CFG + 守卫约束
+│   ├── Ir/                   # 语句级控制流图
 │   ├── Model/                # 类/方法/属性/调用点/链/边
+│   ├── Detector/             # 检测器插件（反序列化优先）
+│   ├── Engine/               # 可选符号执行引擎适配层
 │   ├── Analysis/             # sink 识别 + 链搜索
 │   └── Payload/              # 对象图 → 手写序列化
 ├── examples/demo.php         # 示例漏洞代码
 ├── tests/run.php             # 测试套件
 ├── tests/fixtures/           # 解析/链搜索用例
+├── docs/symbolic-engine-protocol.md  # 可选引擎的通信协议
 ├── composer.json             # 依赖与自动加载定义
 ├── README.zh-CN.md           # 中文文档
 ├── LICENSE                   # MIT
