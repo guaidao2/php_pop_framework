@@ -1,0 +1,14 @@
+#!/usr/bin/env php
+<?php
+declare(strict_types=1);
+
+/**
+ * php-pop-chain 统一入口。
+ *
+ * 用法：./popchain <scan|find|version|help> ...
+ * 也可以：php popchain ...
+ */
+
+require __DIR__ . '/src/bootstrap.php';
+
+exit(PopChain\Cli\Application::run($argv));

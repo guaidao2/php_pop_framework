@@ -1,0 +1,11 @@
+#!/usr/bin/env php
+<?php
+declare(strict_types=1);
+
+/**
+ * 兼容入口，实际逻辑在 src/Cli/Application.php。
+ */
+
+require __DIR__ . '/../src/bootstrap.php';
+
+exit(PopChain\Cli\Application::run($argv));

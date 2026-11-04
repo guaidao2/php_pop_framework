@@ -1,0 +1,36 @@
+# 依赖（README 里说明可手动放置的 php-parser）
+/vendor/
+/node_modules/
+
+# 运行产物：--output 落盘的 payload、临时扫描结果
+payloads.txt
+*.payload
+*.serialized
+/out/
+/dist/
+/build/
+/.tmp/
+/tmp/
+
+# 日志与缓存
+*.log
+.phpunit.result.cache
+.php-cs-fixer.cache
+.php-cs-fixer.php
+
+# 本地环境变量
+.env
+.env.*
+
+# 编辑器与系统垃圾
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# DSH / Reasonix 运行时目录（任务日志、快照、锁文件，不属于项目内容）
+.reasonix/

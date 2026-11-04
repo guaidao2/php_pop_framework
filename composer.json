@@ -1,0 +1,33 @@
+{
+    "name": "guaidao2/php-pop-chain",
+    "description": "PHP deserialization POP chain generator: parse a codebase, find gadget chains and build payloads.",
+    "type": "project",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "guaidao2"
+        },
+        {
+            "name": "coolmoon"
+        }
+    ],
+    "require": {
+        "php": ">=8.1",
+        "nikic/php-parser": "^5.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "PopChain\\": "src/"
+        }
+    },
+    "bin": [
+        "popchain",
+        "bin/popchain"
+    ],
+    "scripts": {
+        "test": "php tests/run.php"
+    },
+    "config": {
+        "sort-packages": true
+    }
+}
