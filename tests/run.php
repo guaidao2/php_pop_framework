@@ -442,6 +442,18 @@ Application::run(['popchain', 'help']);
 $helpText = ob_get_clean();
 check('帮助里列出 --read-file / --write-file', str_contains($helpText, '--read-file') && str_contains($helpText, '--write-file'));
 
+echo "== URL 源码提取 ==\n";
+$rawSource = "<?php class A { public \$x; }";
+check('extractPhpSource 直接返回源码', Application::extractPhpSource($rawSource) === $rawSource);
+
+$demoSource = (string) file_get_contents(__DIR__ . '/fixtures/method_demo.php');
+ob_start();
+highlight_string($demoSource);
+$highlighted = (string) ob_get_clean();
+$extracted = Application::extractPhpSource($highlighted);
+check('能从 highlight_file 渲染页提取源码', is_string($extracted) && str_contains($extracted, 'class ChainEntry'), is_string($extracted) ? substr($extracted, 0, 80) : 'null');
+check('普通 HTML 页面判为非源码', Application::extractPhpSource('<html><body><h1>hello</h1></body></html>') === null);
+
 echo "== CLI ==\n";
 ob_start();
 $exit = Application::run(['popchain', 'find', __DIR__ . '/../examples/demo.php', '--class=Entry', '--cmd=echo CLI']);

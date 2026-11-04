@@ -78,7 +78,7 @@ cat chal.php | ./popchain find --stdin --cmd='id'
 ./popchain find --url=https://example.com/chal.php --cmd='id'
 ```
 
-注意：URL 必须是**纯 PHP 源码**。如果页面是执行后的 HTML、需要登录，或由 PHP 服务器执行过，拉到的不是源码，工具会解析不到类。
+URL 可以直接是纯 PHP 源码；如果是 `highlight_file` / `highlight_string` 渲染出来的源码页（CTF 题里很常见），工具会去掉 HTML 标签、反转义后还原源码再分析。其它渲染后的 HTML（页面已经执行过、需要登录、API 返回）无法还原，工具会提示该 URL 不是源码。
 
 ### 目录
 

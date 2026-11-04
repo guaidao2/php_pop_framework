@@ -78,7 +78,7 @@ cat chal.php | ./popchain find --stdin --cmd='id'
 ./popchain find --url=https://example.com/chal.php --cmd='id'
 ```
 
-Note: the URL must serve **raw PHP source**. If the page is rendered HTML, requires a login, or has already been executed by a PHP server, what you fetch is not source and the tool will find no classes.
+The URL may serve raw PHP source. Pages rendered by `highlight_file` / `highlight_string` (common in CTF challenges that show their own source) are recognised: the tool strips the HTML markup, unescapes it, and analyses the recovered source. Other rendered HTML — pages that already ran, login walls, API responses — cannot be converted and the tool reports that the URL is not raw source.
 
 ### Directory
 

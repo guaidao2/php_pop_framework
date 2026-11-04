@@ -14,7 +14,7 @@ use PopChain\Payload\PayloadBuilder;
  */
 final class Application
 {
-    public const VERSION = '1.3.0';
+    public const VERSION = '1.3.1';
 
     private const DEFAULT_ENTRIES = ['__destruct', '__wakeup', '__unserialize'];
 
@@ -83,6 +83,8 @@ final class Application
             'stdin_empty' => 'No content received from stdin',
             'url_scheme' => '--url only accepts http(s): {url}',
             'download_failed' => 'Download failed: {url} (page may require login or is not raw PHP source)',
+            'not_raw_source' => 'URL returned an HTML page instead of raw PHP source: {url} (the page probably executes PHP or uses highlight_file)',
+            'html_source_extracted' => '[i] URL looks like highlighted PHP source; extracted the source code from the HTML',
             'path_missing' => 'Path not found: {path}',
             'bad_numeric' => '--{option} must be a positive integer, got: {value}',
             'no_classes' => 'No PHP classes found in: {path}',
@@ -108,6 +110,8 @@ final class Application
             'stdin_empty' => '从 stdin 读取不到内容',
             'url_scheme' => '--url 只接受 http(s) 地址: {url}',
             'download_failed' => '下载失败: {url}（页面可能需要登录，或不是纯 PHP 源码）',
+            'not_raw_source' => 'URL 返回的是 HTML 页面，不是 PHP 源码: {url}（页面可能执行了 PHP，或用了 highlight_file）',
+            'html_source_extracted' => '[i] URL 看起来是高亮后的 PHP 源码页，已从 HTML 里提取出源代码',
             'path_missing' => '路径不存在: {path}',
             'bad_numeric' => '--{option} 必须是正整数，当前值: {value}',
             'no_classes' => '没有在 {path} 里找到 PHP 类',
@@ -199,7 +203,16 @@ final class Application
             if ($code === false) {
                 throw new \RuntimeException(self::t('download_failed', ['url' => $url]));
             }
-            $path = self::temporaryFile($code);
+
+            $source = self::extractPhpSource($code);
+            if ($source === null) {
+                throw new \RuntimeException(self::t('not_raw_source', ['url' => $url]));
+            }
+            if ($source !== $code) {
+                fwrite(STDERR, self::t('html_source_extracted') . "\n");
+            }
+
+            $path = self::temporaryFile($source);
             return [$path, $url, $path];
         }
 
@@ -208,6 +221,31 @@ final class Application
             throw new \RuntimeException(self::t('path_missing', ['path' => $path]));
         }
         return [$path, $path, null];
+    }
+
+    /**
+     * 从 URL 内容里得到 PHP 源码：
+     *   - 本来就是源码：原样返回；
+     *   - highlight_file/highlight_string 渲染出来的 HTML：去掉标签、反转义后还原源码；
+     *   - 其它 HTML：返回 null，交由调用方提示"不是源码"。
+     */
+    public static function extractPhpSource(string $content): ?string
+    {
+        if (str_contains($content, '<?php') || str_contains($content, '<?PHP')) {
+            return $content;
+        }
+
+        $looksHighlighted = preg_match('/&lt;\?php/i', $content) === 1
+            || preg_match('/<span[^>]*>&lt;\?/i', $content) === 1;
+        if (!$looksHighlighted) {
+            return null;
+        }
+
+        $text = html_entity_decode(strip_tags($content), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        if (str_contains($text, '<?php') || str_contains($text, '<?PHP')) {
+            return $text;
+        }
+        return null;
     }
 
     private static function temporaryFile(string $content): string
