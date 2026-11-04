@@ -17,7 +17,7 @@ use PopChain\Payload\PayloadBuilder;
  */
 final class Application
 {
-    public const VERSION = '2.6.0';
+    public const VERSION = '2.8.0';
 
     private const DEFAULT_ENTRIES = ['__destruct', '__wakeup', '__unserialize'];
 
@@ -28,7 +28,7 @@ final class Application
     ];
 
     /** 不带值的布尔选项。 */
-    private const BOOLEAN_OPTIONS = ['json', 'stdin', 'include-vendor', 'obfuscate', 'list-types', 'sym-no-includes', 'help', 'version'];
+    private const BOOLEAN_OPTIONS = ['json', 'stdin', 'include-vendor', 'obfuscate', 'list-types', 'sym-no-includes', 'color', 'no-color', 'help', 'version'];
 
     /** 必须是正整数的选项。 */
     private const NUMERIC_OPTIONS = ['max-depth', 'max-chains'];
@@ -90,6 +90,7 @@ final class Application
             'html_source_extracted' => '[i] URL looks like highlighted PHP source; extracted the source code from the HTML',
             'bad_encode' => '--encode only accepts url or base64, got: {value}',
             'available_types' => 'Available detection types:',
+            'all_types' => '(default) run every detector',
             'no_findings' => 'No findings.',
             'unknown_type' => 'Unknown detection type: {type}. Available: {types}',
             'engine_infeasible' => 'engine marked chain as infeasible, skipped: {entry}',
@@ -123,6 +124,7 @@ final class Application
             'html_source_extracted' => '[i] URL 看起来是高亮后的 PHP 源码页，已从 HTML 里提取出源代码',
             'bad_encode' => '--encode 只接受 url 或 base64，当前值: {value}',
             'available_types' => '可用的检测类型:',
+            'all_types' => '（默认）运行所有检测器',
             'no_findings' => '没有发现。',
             'unknown_type' => '未知检测类型: {type}，可用: {types}',
             'engine_infeasible' => '引擎判定链不可行，已跳过: {entry}',
@@ -151,6 +153,7 @@ final class Application
 
         if (isset($options['list-types'])) {
             echo self::t('available_types'), "\n";
+            echo '  all  ', self::t('all_types'), "\n";
             foreach (DetectorRegistry::describe() as $name => $description) {
                 echo '  ', $name, '  ', $description, "\n";
             }
@@ -391,7 +394,9 @@ Options:
   --max-chains=50      Maximum number of chains
   --include-vendor     Also scan vendor/
   --json               JSON output
-  --type=deserialization  Detection type to run (see --list-types)
+  --color              Force ANSI colors even when stdout is not a TTY
+  --no-color           Disable colors (NO_COLOR also works)
+  --type=all|deserialization|symbolic  Detection types to run (default: all, see --list-types)
   --list-types         List available detection types and exit
   --obfuscate          Emit strings as S: hex escapes, hiding keywords from regex filters
   --encode=url|base64  Encode the payload for copy/paste: url for ?data=, base64 for log-safe text
@@ -459,7 +464,9 @@ php_pop_framework v{$version} — PHP 反序列化 POP 链自动生成器
   --max-chains=50      最多输出多少条链
   --include-vendor     连 vendor/ 目录一起扫描
   --json               以 JSON 输出
-  --type=deserialization  要运行的检测类型（见 --list-types）
+  --color              强制 ANSI 彩色输出（即使不是终端）
+  --no-color           关闭彩色（NO_COLOR 环境变量同样生效）
+  --type=all|deserialization|symbolic  要运行的检测类型（默认 all，见 --list-types）
   --list-types         列出可用检测类型后退出
   --obfuscate          字符串改用 S: 十六进制转义，绕过关键字过滤
   --encode=url|base64  payload 直接编码成可直接粘贴的形式：url 用于 ?data=，base64 便于文本传输
@@ -555,26 +562,32 @@ TXT;
             return 0;
         }
 
-        echo self::t('scanning', ['path' => $label]), "\n";
-        echo self::t('classes', ['count' => count($classes)]), "\n\n";
+        $color = self::useColor($options);
+        echo self::paint(self::t('scanning', ['path' => $label]), '1;36', $color), "\n";
+        echo self::paint(self::t('classes', ['count' => count($classes)]), '90', $color), "\n\n";
 
         foreach ($rows as $row) {
             $kind = $row['trait'] ? ' (trait)' : ($row['interface'] ? ' (interface)' : ($row['enum'] ? ' (enum)' : ''));
+            $parent = $row['parent'] !== null ? self::paint(' extends ' . $row['parent'], '90', $color) : '';
+            $kindText = $kind !== '' ? self::paint($kind, '90', $color) : '';
             printf(
-                "%s%s%s  (%s:%d)\n",
-                $row['class'],
-                $row['parent'] !== null ? ' extends ' . $row['parent'] : '',
-                $kind,
-                basename((string) $row['file']),
-                $row['line'],
+                "%s%s%s  %s
+",
+                self::paint((string) $row['class'], '1', $color),
+                $parent,
+                $kindText,
+                self::paint(basename((string) $row['file']) . ':' . $row['line'], '90', $color),
             );
             if ($row['magic'] !== []) {
-                echo '  ', self::t('magic'), implode(', ', $row['magic']), "\n";
+                echo '  ', self::paint(self::t('magic'), '2', $color), self::paint(implode(', ', $row['magic']), '36', $color), "
+";
             }
             foreach ($row['sinks'] as $sink) {
-                echo '  ', self::t('sink'), $sink, "\n";
+                echo '  ', self::paint(self::t('sink'), '2', $color), self::paint($sink, '33', $color), "
+";
             }
-            echo "\n";
+            echo "
+";
         }
 
         foreach ($parser->warnings() as $warning) {
@@ -586,7 +599,7 @@ TXT;
 
     private static function find(string $path, string $label, array $options): int
     {
-        $type = strtolower((string) self::option($options, 'type', 'deserialization'));
+        $type = strtolower((string) self::option($options, 'type', 'all'));
 
         $engineCommand = self::option($options, 'engine-cmd');
         $engineName = strtolower((string) self::option($options, 'engine', ''));
@@ -607,31 +620,50 @@ TXT;
             fwrite(STDERR, '[!] ' . self::t('engine_unavailable', ['engine' => $engineName]) . "\n");
         }
 
-        $detector = DetectorRegistry::create($type, $engine);
-        if ($detector === null) {
+        $detectors = $type === 'all'
+            ? DetectorRegistry::createAll($engine)
+            : [DetectorRegistry::create($type, $engine)];
+
+        $knownDetector = false;
+        foreach ($detectors as $detector) {
+            if ($detector !== null) {
+                $knownDetector = true;
+            }
+        }
+        if (!$knownDetector) {
             fwrite(STDERR, '[!] ' . self::t('unknown_type', [
                 'type' => $type,
-                'types' => implode(', ', DetectorRegistry::names()),
-            ]) . "\n");
+                'types' => 'all, ' . implode(', ', DetectorRegistry::names()),
+            ]) . "
+");
             return 2;
+        }
+
+        $needsClasses = false;
+        foreach ($detectors as $detector) {
+            if ($detector !== null && $detector->name() === 'deserialization') {
+                $needsClasses = true;
+            }
         }
 
         $classes = [];
         $warnings = [];
-        if ($type === 'deserialization') {
+        if ($needsClasses) {
             $parser = new ProjectParser((bool) self::option($options, 'include-vendor', false));
             $classes = $parser->parsePath($path);
             $warnings = $parser->warnings();
-            if ($classes === []) {
-                fwrite(STDERR, '[!] ' . self::t('no_classes', ['path' => $label]) . "\n");
+            if ($classes === [] && $type === 'deserialization') {
+                fwrite(STDERR, '[!] ' . self::t('no_classes', ['path' => $label]) . "
+");
                 foreach ($warnings as $warning) {
-                    fwrite(STDERR, '[warn] ' . $warning . "\n");
+                    fwrite(STDERR, '[warn] ' . $warning . "
+");
                 }
                 return 2;
             }
         }
 
-        $findings = $detector->detect($classes, [
+        $detectorOptions = [
             'path' => $path,
             'entries' => self::entries($options),
             'max_depth' => (int) self::option($options, 'max-depth', 8),
@@ -643,7 +675,17 @@ TXT;
             'sym_max_loop' => (int) self::option($options, 'sym-max-loop', 3),
             'sym_entry' => self::option($options, 'sym-entry', null),
             'sym_follow_includes' => !isset($options['sym-no-includes']),
-        ]);
+        ];
+
+        $findings = [];
+        foreach ($detectors as $detector) {
+            if ($detector === null) {
+                continue;
+            }
+            foreach ($detector->detect($classes, $detectorOptions) as $finding) {
+                $findings[] = $finding;
+            }
+        }
 
         $classFilter = self::option($options, 'class');
         $sinkFilter = self::option($options, 'sink');
@@ -767,15 +809,18 @@ TXT;
             return $records === [] ? 1 : 0;
         }
 
-        echo self::t('scanning', ['path' => $label]), "\n";
-        if ($type === 'deserialization') {
-            echo self::t('classes', ['count' => count($classes)]), "\n";
-            echo self::t('entries'), implode(', ', self::entries($options)), "\n";
+        $color = self::useColor($options);
+        echo self::paint(self::t('scanning', ['path' => $label]), '1;36', $color), "\n";
+        if ($type !== 'symbolic') {
+            echo self::paint(self::t('classes', ['count' => count($classes)]), '90', $color), "
+";
+            echo self::paint(self::t('entries'), '90', $color), self::paint(implode(', ', self::entries($options)), '36', $color), "
+";
         }
         echo "\n";
 
         if ($records === []) {
-            if ($type === 'deserialization') {
+            if ($type !== 'symbolic') {
                 echo self::t('no_chains'), "\n";
                 echo self::t('try_entries'), "\n";
                 echo self::t('try_depth'), "\n";
@@ -787,47 +832,54 @@ TXT;
         }
 
         foreach ($records as $index => $record) {
-            printf(
-                "[%d] [%s] %s  (%s/%s)\n",
+            $severity = strtoupper((string) $record['severity']);
+            $severityColor = match (strtolower($severity)) {
+                'critical' => '1;31',
+                'high' => '1;33',
+                'medium' => '33',
+                'low' => '36',
+                default => '1;37',
+            };
+
+            echo sprintf(
+                "[%d] %s %s  %s\n",
                 $index + 1,
-                strtoupper((string) $record['severity']),
-                $record['title'],
-                $record['type'],
-                (string) ($record['category'] ?? ''),
+                self::paint('[' . $severity . ']', $severityColor, $color),
+                self::paint((string) $record['title'], '1', $color),
+                self::paint('(' . $record['type'] . '/' . (string) ($record['category'] ?? '') . ')', '90', $color),
             );
 
             if ((string) ($record['file'] ?? '') !== '') {
-                printf("    %s:%d\n", $record['file'], (int) ($record['line'] ?? 0));
+                echo '    ', self::paint($record['file'] . ':' . (int) ($record['line'] ?? 0), '90', $color), "\n";
             }
 
             foreach ($record['edges'] as $edge) {
                 printf(
-                    "    %s %-14s \$this->%-14s %s:%d\n",
-                    self::t('via'),
-                    $edge['via'],
+                    "    %s %-14s \$this->%-14s %s\n",
+                    self::paint(self::t('via'), '2', $color),
+                    self::paint((string) $edge['via'], '36', $color),
                     $edge['property'],
-                    self::shortName(explode('::', $edge['from'])[0]),
-                    $edge['line'],
+                    self::paint((string) $edge['line'], '90', $color),
                 );
             }
 
             if (($record['taint'] ?? []) !== []) {
-                echo '    taint: ', implode(', ', $record['taint']), "\n";
+                echo '    ', self::paint('taint:', '2', $color), ' ', self::paint(implode(', ', $record['taint']), '35', $color), "\n";
             }
             if (($record['path'] ?? []) !== []) {
-                echo '    path: ', implode(' && ', $record['path']), "\n";
+                echo '    ', self::paint('path:', '2', $color), ' ', self::paint(implode(' && ', $record['path']), '35', $color), "\n";
             }
             if ($record['sink'] !== null && isset($record['sink']['display'])) {
-                echo '    sink: ', $record['sink']['display'], "\n";
+                echo '    ', self::paint('sink:', '2', $color), ' ', self::paint((string) $record['sink']['display'], '31', $color), "\n";
             }
             foreach ($record['notes'] as $note) {
-                echo '    ', $note, "\n";
+                echo '    ', self::paint((string) $note, '33', $color), "\n";
             }
             if ((string) ($record['payload_encoded'] ?? '') !== '') {
-                echo '    payload: ', self::displayable($record['payload_encoded']), "\n";
+                echo '    ', self::paint('payload:', '2', $color), ' ', self::paint(self::displayable($record['payload_encoded']), '36', $color), "\n";
             }
             if ((string) ($record['snippet'] ?? '') !== '') {
-                echo '    | ', trim($record['snippet']), "\n";
+                echo '    ', self::paint('|', '90', $color), ' ', self::paint(trim((string) $record['snippet']), '90', $color), "\n";
             }
             echo "\n";
         }
@@ -878,6 +930,22 @@ TXT;
             'file_read', 'env', 'var', 'mail' => 'medium',
             default => 'high',
         };
+    }
+
+    private static function useColor(array $options): bool
+    {
+        if (isset($options['no-color']) || getenv('NO_COLOR') !== false) {
+            return false;
+        }
+        if (isset($options['color'])) {
+            return true;
+        }
+        return function_exists('stream_isatty') && @stream_isatty(STDOUT);
+    }
+
+    private static function paint(string $text, string $code, bool $color): string
+    {
+        return $color ? "\033[" . $code . 'm' . $text . "\033[0m" : $text;
     }
 
     /** @return list<string> */

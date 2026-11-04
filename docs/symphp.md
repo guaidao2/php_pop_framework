@@ -2,7 +2,7 @@
 
 > 本引擎原生合并进 php_pop_framework，与项目其余代码共用命名空间和自动加载：
 > - 源码在 `src/Symbolic/`，命名空间 `PopChain\Symbolic`；
-> - 唯一 CLI 入口是 `popchain`，用 `--type=symbolic` 选择该检测器；
+> - 唯一 CLI 入口是 `popchain`；默认 `--type=all` 会同时跑反序列化和符号执行，只用本引擎时加 `--type=symbolic`；
 > - 引擎自身测试：`php tests/symbolic/run.php`；
 > - 引擎由 guaidao2 & coolmoon 设计。
 

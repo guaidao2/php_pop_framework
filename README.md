@@ -4,7 +4,7 @@
 
 php_pop_framework is a PHP deserialization POP chain generator for CTF and authorized code auditing. The CLI entry point is `popchain`.
 
-It also embeds **SymPHP**, a path-sensitive symbolic-execution / taint analysis engine, exposed as a second detection type (`--type=symbolic`) for XSS, SQL injection, command injection, LFI, SSRF, XXE and more.
+It also embeds **SymPHP**, a path-sensitive symbolic-execution / taint analysis engine, exposed as a second detection type for XSS, SQL injection, command injection, LFI, SSRF, XXE and more. Both detectors run by default (`--type=all`); use `--type=deserialization` or `--type=symbolic` to narrow.
 
 Give it a PHP source tree (a single file, a directory, stdin, or a URL) and the tool will:
 
@@ -184,9 +184,11 @@ popchain version
 | `--max-chains=50` | Maximum number of chains to output |
 | `--include-vendor` | Also scan the `vendor/` directory |
 | `--json` | Emit JSON |
+| `--color` | Force ANSI colors even when stdout is not a TTY |
+| `--no-color` | Disable colors; the `NO_COLOR` environment variable also works |
 | `--obfuscate` | Write strings as `S:` hex escapes so keyword filters do not see them |
 | `--encode=url\|base64` | Encode the payload for direct copy/paste: `url` for a `?data=` query, `base64` for log-safe text; `--output` writes the encoded form too |
-| `--type=deserialization\|symbolic` | Detection type to run: `deserialization` (default) or `symbolic`; see `--list-types` |
+| `--type=all\|deserialization\|symbolic` | Detection types to run; `all` (default) runs every detector, pick one to narrow; see `--list-types` |
 | `--list-types` | List available detection types and exit |
 | `--engine=none\|external` | Engine override: the built-in in-process solver is used by default, `none` disables it, `external` uses `--engine-cmd` |
 | `--engine-cmd=cmd` | External engine command: JSON request on stdin, JSON response on stdout |

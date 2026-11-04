@@ -34,7 +34,7 @@ final class DeserializationDetector implements DetectorInterface
 
     public function description(): string
     {
-        return 'PHP object injection / POP chain detection (current default)';
+        return 'PHP object injection / POP chain detection';
     }
 
     /** @return list<Finding> */

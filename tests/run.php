@@ -604,6 +604,12 @@ $typesOut2 = ob_get_clean();
 check('--list-types 包含 symbolic', str_contains($typesOut2, 'symbolic'), $typesOut2);
 
 ob_start();
+$exit = Application::run(['popchain', 'find', __DIR__ . '/../examples/symbolic/vuln']);
+$defaultAllOut = ob_get_clean();
+check('默认运行全部检测器', $exit === 0 && str_contains($defaultAllOut, '(symbolic/XSS)'), $defaultAllOut);
+check('--list-types 列出 all', str_contains($typesOut2, 'all'), $typesOut2);
+
+ob_start();
 $exit = Application::run(['popchain', 'find', __DIR__ . '/fixtures/dynamic_lab.php']);
 $dynamicOut = ob_get_clean();
 check('动态回调链能被识别', $exit === 0 && str_contains($dynamicOut, 'DynamicEngine::__wakeup -> DynamicSys::doExecute'), $dynamicOut);
@@ -646,6 +652,16 @@ $jsonOutput = ob_get_clean();
 $decoded = json_decode($jsonOutput, true);
 check('--json 输出可解析且包含 2 条结果', is_array($decoded) && count($decoded['findings'] ?? []) === 2);
 check('--json 带工具名与版本', ($decoded['tool'] ?? '') === 'php_pop_framework' && ($decoded['version'] ?? '') === Application::VERSION);
+ob_start();
+Application::run(['popchain', 'find', __DIR__ . '/../examples/demo.php', '--color']);
+$colorOut = ob_get_clean();
+check('--color 强制输出 ANSI 转义', str_contains($colorOut, "["), $colorOut);
+
+ob_start();
+Application::run(['popchain', 'find', __DIR__ . '/../examples/demo.php']);
+$plainOut = ob_get_clean();
+check('非终端默认不输出 ANSI', !str_contains($plainOut, "["), $plainOut);
+
 check('统一 JSON 字段齐全', isset(
     $decoded['findings'][0]['type'],
     $decoded['findings'][0]['severity'],

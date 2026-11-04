@@ -4,7 +4,7 @@ English: [README.md](README.md)
 
 php_pop_framework 是一个 PHP 反序列化 POP 链自动生成器，面向 CTF / 授权代码审计。命令行入口是 `popchain`。
 
-仓库内同时合并了 **SymPHP** 符号执行 / 污点分析引擎，作为第二种检测类型（`--type=symbolic`），覆盖 XSS、SQL 注入、命令注入、文件包含、SSRF、XXE 等。
+仓库内同时合并了 **SymPHP** 符号执行 / 污点分析引擎，作为第二种检测类型，覆盖 XSS、SQL 注入、命令注入、文件包含、SSRF、XXE 等。两个检测器默认一起跑（`--type=all`）；只想跑一种就用 `--type=deserialization` 或 `--type=symbolic`。
 
 输入一份 PHP 源码（单个文件、目录、stdin 或 URL），工具会：
 
@@ -177,9 +177,11 @@ popchain version
 | `--max-chains=50` | 最多输出多少条链 |
 | `--include-vendor` | 连 `vendor/` 目录一起扫描 |
 | `--json` | 以 JSON 输出 |
+| `--color` | 强制 ANSI 彩色输出（即使不是终端） |
+| `--no-color` | 关闭彩色；`NO_COLOR` 环境变量同样生效 |
 | `--obfuscate` | 字符串改用 `S:` 十六进制转义，关键字不会被过滤器看到 |
 | `--encode=url\|base64` | payload 直接编码，方便复制粘贴：`url` 用于 `?data=`，`base64` 便于文本传输；`--output` 也写编码后的形式 |
-| `--type=deserialization\|symbolic` | 检测类型：`deserialization`（默认）或 `symbolic`，见 `--list-types` |
+| `--type=all\|deserialization\|symbolic` | 检测类型：`all`（默认，运行所有检测器），也可只跑某一个；见 `--list-types` |
 | `--list-types` | 列出可用检测类型后退出 |
 | `--engine=none\|external` | 引擎覆盖：内置进程内求解器默认启用，`none` 关闭，`external` 配合 `--engine-cmd` 使用 |
 | `--engine-cmd=命令` | 外部引擎命令：stdin 收 JSON 请求，stdout 回 JSON 响应 |

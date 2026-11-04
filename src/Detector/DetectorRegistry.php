@@ -36,6 +36,19 @@ final class DetectorRegistry
         return new $class($solver);
     }
 
+    /** @return list<DetectorInterface> 运行全部已注册检测器 */
+    public static function createAll(?EngineInterface $engine = null): array
+    {
+        $detectors = [];
+        foreach (self::names() as $name) {
+            $detector = self::create($name, $engine);
+            if ($detector !== null) {
+                $detectors[] = $detector;
+            }
+        }
+        return $detectors;
+    }
+
     /** @return array<string, string> 类型名 => 说明 */
     public static function describe(): array
     {
