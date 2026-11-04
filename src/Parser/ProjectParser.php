@@ -298,6 +298,7 @@ final class ProjectParser
             preconditions: $guardCollector->collect($node->stmts),
             cfg: (new \PopChain\Ir\CfgBuilder())->build($declaringClass, $name, $node->stmts, $node->getStartLine()),
             guardConditions: $guardCollector->conditions(),
+            paramRequirements: $guardCollector->paramRequirements(),
         );
 
         return $method;

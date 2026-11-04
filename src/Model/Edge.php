@@ -18,6 +18,8 @@ final class Edge
         public string $viaProperty,
         public array $argMapping = [],
         public int $line = 0,
+        /** @var array<string, mixed> 触发这条边还需要给 from 类对象补的属性值 */
+        public array $preconditions = [],
     ) {
     }
 

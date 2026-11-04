@@ -17,7 +17,7 @@ use PopChain\Payload\PayloadBuilder;
  */
 final class Application
 {
-    public const VERSION = '2.5.0';
+    public const VERSION = '2.6.0';
 
     private const DEFAULT_ENTRIES = ['__destruct', '__wakeup', '__unserialize'];
 
@@ -711,6 +711,7 @@ TXT;
                     'payload_encoded' => self::encodePayload($payloadString, $encode),
                     'notes' => $notes,
                     'snippet' => '',
+                    'literal_sink' => $chain->literalSink,
                 ];
                 continue;
             }

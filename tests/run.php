@@ -604,6 +604,14 @@ $typesOut2 = ob_get_clean();
 check('--list-types 包含 symbolic', str_contains($typesOut2, 'symbolic'), $typesOut2);
 
 ob_start();
+$exit = Application::run(['popchain', 'find', __DIR__ . '/fixtures/dynamic_lab.php']);
+$dynamicOut = ob_get_clean();
+check('动态回调链能被识别', $exit === 0 && str_contains($dynamicOut, 'DynamicEngine::__wakeup -> DynamicSys::doExecute'), $dynamicOut);
+check('动态方法名反推出属性值', str_contains($dynamicOut, 's:7:"execute"'), $dynamicOut);
+check('形参数组约束写进 payload', str_contains($dynamicOut, 'a:2:{i:0;s:5:"admin";i:1;i:1001;}'), $dynamicOut);
+check('常量 sink 标注可达性', str_contains($dynamicOut, "sink argument is fixed: 'cat /flag'"), $dynamicOut);
+
+ob_start();
 $exit = Application::run(['popchain', 'find', __DIR__ . '/fixtures/guard_demo.php']);
 $conflictOut = ob_get_clean();
 check('内置引擎能剪掉矛盾守卫的链', !str_contains($conflictOut, 'GuardConflictEntry'), $conflictOut);

@@ -18,6 +18,7 @@ final class ArgInfo
     public const ARRAY_LITERAL = 'array_literal';
     public const CONCAT = 'concat';
     public const CALLABLE_ARRAY = 'callable_array';
+    public const CALLABLE_ARRAY_DYNAMIC = 'callable_array_dynamic';
     public const ARRAY_ELEMENT = 'array_element';
     public const PARAM_ELEMENT = 'param_element';
     public const ARG_ELEMENT = 'arg_element';
@@ -106,6 +107,7 @@ final class ArgInfo
             self::STRING, self::INT, self::FLOAT, self::BOOL, self::NULL => var_export($this->literal, true),
             self::CONCAT => $this->raw ?? 'concat',
             self::CALLABLE_ARRAY => '[$this->' . $this->name . ', ' . var_export($this->literal, true) . ']',
+            self::CALLABLE_ARRAY_DYNAMIC => '[$this->' . $this->name . ', <dynamic method>]',
             self::ARRAY_ELEMENT => '$this->' . $this->name . '[' . (string) $this->literal . ']',
             self::PARAM_ELEMENT => '$' . $this->name . $this->describePath(),
             self::ARG_ELEMENT => '$' . $this->name . $this->describePath(),

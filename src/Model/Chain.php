@@ -11,6 +11,11 @@ final class Chain
     /** @var list<array{class:string,property:string,value:mixed}> 符号执行引擎给出的属性赋值 */
     public array $engineAssignments = [];
 
+    /** sink 实参是写死的常量：链的价值在于"能到达 sink"，不是参数可控。 */
+    public bool $literalSink = false;
+
+    public string $literalSinkValue = '';
+
     /** @param list<Edge> $edges */
     public function __construct(
         public ClassInfo $entryClass,

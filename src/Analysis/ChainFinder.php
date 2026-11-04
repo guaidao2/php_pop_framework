@@ -116,10 +116,16 @@ final class ChainFinder
             if ($hit->category === 'callable') {
                 continue;
             }
-            if (!$this->argControllable($hit->arg, $method, $edges)) {
+            $controllable = $this->argControllable($hit->arg, $method, $edges);
+            $literal = !$controllable && $hit->arg->isLiteral();
+            if (!$controllable && !$literal) {
                 continue;
             }
             $chain = new Chain($entryClass, $entryMethod, $edges, $hit, $class, $method);
+            if ($literal) {
+                $chain->literalSink = true;
+                $chain->literalSinkValue = $this->literalDescription($hit->arg);
+            }
             $signature = $chain->signature();
             if (isset($this->seen[$signature])) {
                 $this->preferBetterMapping($signature, $chain);
@@ -423,6 +429,53 @@ final class ChainFinder
             return $edges;
         }
 
+        // call_user_func([$this->obj, "do" . ucfirst($this->mode)], ...)
+        if ($callable->kind === ArgInfo::CALLABLE_ARRAY_DYNAMIC && $callable->name !== null) {
+            $prefix = '';
+            $methodProperty = '';
+            $transform = 'identity';
+            foreach ($callable->parts as [$kind, $text]) {
+                if ($kind === 'lit') {
+                    $prefix = $text;
+                } elseif ($kind === 'prop') {
+                    $methodProperty = $text;
+                } elseif ($kind === 'transform') {
+                    $transform = $text;
+                }
+            }
+            if ($methodProperty === '') {
+                return $edges;
+            }
+
+            foreach ($this->classes as $targetClass) {
+                if (!$targetClass->isInstantiable()) {
+                    continue;
+                }
+                foreach ($targetClass->methods as $targetMethod) {
+                    if (!$targetMethod->isPublic()) {
+                        continue;
+                    }
+                    $name = $targetMethod->name;
+                    if ($prefix !== '' && !str_starts_with($name, $prefix)) {
+                        continue;
+                    }
+                    $suffix = substr($name, strlen($prefix));
+                    $edges[] = new Edge(
+                        $class,
+                        $method,
+                        $targetClass,
+                        $targetMethod,
+                        'callable_dynamic',
+                        $callable->name,
+                        $this->callableArgMapping($call, $position, $mode, $arrayPosition, $elementParam, $targetMethod),
+                        $call->line,
+                        [$methodProperty => $this->inverseTransform($suffix, $transform)],
+                    );
+                }
+            }
+            return $edges;
+        }
+
         // call_user_func([$this->obj, 'method'], ...)
         if ($callable->kind === ArgInfo::CALLABLE_ARRAY
             && $callable->name !== null
@@ -522,6 +575,35 @@ final class ChainFinder
             return $arg->targetProperty();
         }
         return null;
+    }
+
+    /** 动态方法名的逆变换：方法名去掉前缀后，还原属性需要填的值。 */
+    private function inverseTransform(string $suffix, string $transform): string
+    {
+        return match ($transform) {
+            'ucfirst', 'ucwords' => lcfirst($suffix),
+            'lcfirst' => ucfirst($suffix),
+            default => $suffix,
+        };
+    }
+
+    /** 常量 sink 实参的可读描述。 */
+    private function literalDescription(ArgInfo $arg): string
+    {
+        $value = $arg->literal;
+        if (is_array($value)) {
+            return '[...]';
+        }
+        if (is_string($value)) {
+            return "'" . $value . "'";
+        }
+        if (is_bool($value)) {
+            return $value ? 'true' : 'false';
+        }
+        if ($value === null) {
+            return 'null';
+        }
+        return (string) $value;
     }
 
     private function shortName(string $name): string

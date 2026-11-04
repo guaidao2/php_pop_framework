@@ -47,6 +47,9 @@ final class CallCollector extends NodeVisitorAbstract
         return array_keys($this->constProps);
     }
 
+    /** @var array<string, Node> 局部变量最近一次赋值的表达式，用于解析动态方法名 */
+    private array $localExprs = [];
+
     /** @var array<string, true> 当前方法的参数名（小写） */
     private array $params = [];
 
@@ -323,6 +326,7 @@ final class CallCollector extends NodeVisitorAbstract
 
         if ($node->var instanceof Expr\Variable && is_string($node->var->name)) {
             $this->storeTaint($this->varTaint, $node->var->name, $info);
+            $this->localExprs[$node->var->name] = $node->expr;
             return;
         }
 
@@ -527,10 +531,6 @@ final class CallCollector extends NodeVisitorAbstract
         if ($items[0]->key !== null || $items[1]->key !== null) {
             return null;
         }
-        if (!$items[1]->value instanceof Scalar\String_) {
-            return null;
-        }
-
         $object = $items[0]->value;
         $property = null;
         if ($object instanceof Expr\PropertyFetch && $this->isThisProperty($object)) {
@@ -545,7 +545,66 @@ final class CallCollector extends NodeVisitorAbstract
             return null;
         }
 
-        return new ArgInfo(ArgInfo::CALLABLE_ARRAY, $property, $raw, $items[1]->value->value);
+        $method = $items[1]->value;
+        if ($method instanceof Expr\Variable && is_string($method->name) && isset($this->localExprs[$method->name])) {
+            $method = $this->localExprs[$method->name];
+        }
+        if ($method instanceof Scalar\String_) {
+            return new ArgInfo(ArgInfo::CALLABLE_ARRAY, $property, $raw, $method->value);
+        }
+
+        $dynamic = $this->dynamicCallableMethod($method);
+        if ($dynamic !== null) {
+            [$prefix, $methodProperty, $transform] = $dynamic;
+            return new ArgInfo(
+                ArgInfo::CALLABLE_ARRAY_DYNAMIC,
+                $property,
+                $raw,
+                null,
+                [
+                    ['lit', $prefix],
+                    ['prop', $methodProperty],
+                    ['transform', $transform],
+                ],
+            );
+        }
+
+        return null;
+    }
+
+    /**
+     * 解析动态方法名表达式，返回 [前缀, 方法名属性, 大小写变换]。
+     *
+     * 覆盖 "do" . ucfirst($this->mode) / "do" . $this->mode 这类写法。
+     *
+     * @return array{0:string,1:string,2:string}|null
+     */
+    private function dynamicCallableMethod(Expr $expr): ?array
+    {
+        if (!$expr instanceof Expr\BinaryOp\Concat || !$expr->left instanceof Scalar\String_) {
+            return null;
+        }
+
+        $prefix = $expr->left->value;
+        $right = $expr->right;
+
+        if ($this->isThisProperty($right)) {
+            return [$prefix, $this->propertyName($right), 'identity'];
+        }
+
+        if ($right instanceof Expr\FuncCall && $right->name instanceof Name && count($right->args) >= 1) {
+            $transform = strtolower($right->name->toString());
+            if (!in_array($transform, ['ucfirst', 'lcfirst', 'strtolower', 'ucwords'], true)) {
+                return null;
+            }
+            $arg = $right->args[0];
+            if (!$arg instanceof Node\Arg || !$this->isThisProperty($arg->value)) {
+                return null;
+            }
+            return [$prefix, $this->propertyName($arg->value), $transform];
+        }
+
+        return null;
     }
 
     /** 属性参数：跟随 $this->a = $this->b 这类赋值。 */

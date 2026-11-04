@@ -20,6 +20,7 @@ final class MethodInfo
         public array $preconditions = [],
         public ?\PopChain\Ir\MethodCfg $cfg = null,
         public array $guardConditions = [],
+        public array $paramRequirements = [],
     ) {
     }
 

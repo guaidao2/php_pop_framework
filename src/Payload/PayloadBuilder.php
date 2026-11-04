@@ -46,6 +46,9 @@ final class PayloadBuilder
 
         foreach ($chain->edges as $index => $edge) {
             $fromNode[$index] = $current;
+            foreach ($edge->preconditions as $property => $propertyValue) {
+                $this->setProperty($nodes[$current], $edge->fromClass, $property, $propertyValue);
+            }
             if ($this->isInternalEdge($edge)) {
                 continue;
             }
@@ -58,11 +61,93 @@ final class PayloadBuilder
 
         $this->applyPreconditions($chain, $nodes, $fromNode);
         $this->applyEngineAssignments($chain, $nodes);
+        $this->applyParameterRequirements($chain, $nodes, $fromNode);
         $this->fillArraySlots($chain, $nodes, $fromNode);
-        $this->applySinkValue($chain, $nodes, $fromNode, $current, $value);
+        if ($chain->literalSink) {
+            // 常量 sink 不需要补值，payload 能走到 sink 就成立
+            $this->sinkValueWritten = true;
+        } else {
+            $this->applySinkValue($chain, $nodes, $fromNode, $current, $value);
+        }
         $this->padWakeupBlockedNodes($nodes);
 
         return (new Serializer($this->obfuscate))->serializeNode($nodes[0]);
+    }
+
+    /**
+     * 被调用方法的形参约束（is_array / count / 元素比较）反推成调用点属性的数组值。
+     *
+     * 例如 call_user_func([$this->handler, 'doExecute'], $this->param) 里
+     * doExecute($args) 要求 $args 是长度 2、第一个元素 admin、第二个元素 >1000，
+     * 就把 $this->param 写成 ['admin', 1001]。
+     *
+     * @param array<int, PayloadNode> $nodes
+     * @param array<int, int> $fromNode
+     */
+    private function applyParameterRequirements(Chain $chain, array $nodes, array $fromNode): void
+    {
+        foreach ($chain->edges as $index => $edge) {
+            if (!isset($fromNode[$index], $nodes[$fromNode[$index]])) {
+                continue;
+            }
+            if ($edge->toMethod->paramRequirements === []) {
+                continue;
+            }
+
+            foreach ($edge->toMethod->paramRequirements as $paramName => $requirement) {
+                $position = null;
+                foreach ($edge->toMethod->params as $candidate => $param) {
+                    if ($param->name === $paramName) {
+                        $position = $candidate;
+                        break;
+                    }
+                }
+                if ($position === null) {
+                    continue;
+                }
+
+                $mapped = $edge->argMapping[$position] ?? null;
+                if ($mapped === null || $mapped->kind !== ArgInfo::THIS_PROPERTY || $mapped->name === null) {
+                    continue;
+                }
+
+                $value = $this->valueFromRequirement($requirement);
+                if ($value === null) {
+                    continue;
+                }
+                $this->setProperty($nodes[$fromNode[$index]], $edge->fromClass, $mapped->name, $value);
+            }
+        }
+    }
+
+    /** @param array<string, mixed> $requirement */
+    private function valueFromRequirement(array $requirement): mixed
+    {
+        if (!isset($requirement['kind']) && !isset($requirement['length']) && !isset($requirement['elements'])) {
+            return null;
+        }
+
+        $elements = $requirement['elements'] ?? [];
+        $length = (int) ($requirement['length'] ?? ($elements === [] ? 1 : max(array_keys($elements)) + 1));
+        $length = max(1, $length);
+
+        $value = [];
+        for ($index = 0; $index < $length; $index++) {
+            $spec = $elements[$index] ?? [];
+            if (array_key_exists('value', $spec)) {
+                $value[$index] = $spec['value'];
+            } elseif (isset($spec['gt'])) {
+                $value[$index] = (int) $spec['gt'] + 1;
+            } elseif (isset($spec['lt'])) {
+                $value[$index] = (int) $spec['lt'] - 1;
+            } elseif (!empty($spec['numeric'])) {
+                $value[$index] = 1;
+            } else {
+                $value[$index] = 0;
+            }
+        }
+
+        return $value;
     }
 
     /**

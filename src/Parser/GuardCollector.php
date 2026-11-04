@@ -30,6 +30,13 @@ final class GuardCollector
     /** @var list<array{expr:string,expected:bool}> */
     private array $conditions = [];
 
+    /**
+     * 方法形参的约束（用于给 call_user_func 转发过去的属性构造数组）。
+     *
+     * @var array<string, array{kind?:string,length?:int,elements:array<int,array<string,mixed>>}>
+     */
+    private array $paramRequirements = [];
+
     private NodeFinder $finder;
 
     private \PhpParser\PrettyPrinter\Standard $printer;
@@ -57,6 +64,12 @@ final class GuardCollector
     public function conditions(): array
     {
         return $this->conditions;
+    }
+
+    /** @return array<string, array{kind?:string,length?:int,elements:array<int,array<string,mixed>>}> */
+    public function paramRequirements(): array
+    {
+        return $this->paramRequirements;
     }
 
     /** @param array<Node> $stmts */
@@ -224,6 +237,10 @@ final class GuardCollector
 
     private function applyComparison(Expr\BinaryOp $node, bool $expected): void
     {
+        if ($this->recordParamComparison($node, $expected)) {
+            return;
+        }
+
         $pairs = [[$node->left, $node->right], [$node->right, $node->left]];
         foreach ($pairs as [$propertyNode, $literalNode]) {
             if (!$this->isThisProperty($propertyNode)) {
@@ -285,9 +302,15 @@ final class GuardCollector
     private function applyTypeGuard(string $function, array $args, bool $expected): void
     {
         $arg = $args[0] ?? null;
-        if (!$arg instanceof Node\Arg || !$this->isThisProperty($arg->value)) {
+        if (!$arg instanceof Node\Arg) {
             return;
         }
+
+        if (!$this->isThisProperty($arg->value)) {
+            $this->recordParamTypeGuard($function, $arg->value, $expected);
+            return;
+        }
+
         $property = $this->propertyName($arg->value);
 
         $value = match ($function) {
@@ -311,6 +334,135 @@ final class GuardCollector
 
         if ($isKnown) {
             $this->requirements[$property] = $value;
+        }
+    }
+
+    /** 形参约束：count($args)、$args[k] 比较、intval($args[k]) 比较。 */
+    private function recordParamComparison(Expr\BinaryOp $node, bool $expected): bool
+    {
+        foreach ([[$node->left, $node->right], [$node->right, $node->left]] as [$callNode, $literalNode]) {
+            if (!$callNode instanceof Expr\FuncCall || !$callNode->name instanceof Node\Name) {
+                continue;
+            }
+            $function = strtolower($callNode->name->toString());
+            $inner = $callNode->args[0]->value ?? null;
+            if (!$inner instanceof Node) {
+                continue;
+            }
+            $literal = $this->literalValue($literalNode);
+            if ($literal === null) {
+                continue;
+            }
+
+            if ($function === 'count') {
+                $param = $this->paramVariableName($inner);
+                if ($param === null || !is_int($literal) || !$expected) {
+                    continue;
+                }
+                if ($node instanceof Expr\BinaryOp\Identical || $node instanceof Expr\BinaryOp\Equal) {
+                    $this->ensureParam($param);
+                    $this->paramRequirements[$param]['length'] = $literal;
+                }
+                return true;
+            }
+
+            if ($function === 'intval') {
+                $dim = $this->paramDim($inner);
+                if ($dim === null || !is_int($literal)) {
+                    continue;
+                }
+                [$param, $index] = $dim;
+                $this->ensureElement($param, $index);
+                if ($expected && $node->left === $callNode) {
+                    if ($node instanceof Expr\BinaryOp\Greater) {
+                        $this->paramRequirements[$param]['elements'][$index]['gt'] = $literal;
+                    } elseif ($node instanceof Expr\BinaryOp\GreaterOrEqual) {
+                        $this->paramRequirements[$param]['elements'][$index]['gt'] = $literal - 1;
+                    } elseif ($node instanceof Expr\BinaryOp\Smaller) {
+                        $this->paramRequirements[$param]['elements'][$index]['lt'] = $literal;
+                    } elseif ($node instanceof Expr\BinaryOp\SmallerOrEqual) {
+                        $this->paramRequirements[$param]['elements'][$index]['lt'] = $literal + 1;
+                    }
+                }
+                return true;
+            }
+        }
+
+        foreach ([[$node->left, $node->right], [$node->right, $node->left]] as [$dimNode, $literalNode]) {
+            $dim = $this->paramDim($dimNode);
+            if ($dim === null) {
+                continue;
+            }
+            $isNullLiteral = $this->literalNodeIsNull($literalNode);
+            $literal = $this->literalValue($literalNode);
+            if ($literal === null && !$isNullLiteral) {
+                continue;
+            }
+            $value = $this->satisfyingValue($node::class, $literal, $expected, $node->left === $dimNode);
+            if ($value !== null || $isNullLiteral) {
+                [$param, $index] = $dim;
+                $this->ensureElement($param, $index);
+                $this->paramRequirements[$param]['elements'][$index]['value'] = $value;
+            }
+            return true;
+        }
+
+        return false;
+    }
+
+    /** 形参类型约束：is_array($args)、is_numeric($args[k]) 等。 */
+    private function recordParamTypeGuard(string $function, Node $value, bool $expected): void
+    {
+        if (!$expected) {
+            return;
+        }
+
+        $dim = $this->paramDim($value);
+        if ($dim !== null) {
+            [$param, $index] = $dim;
+            $this->ensureElement($param, $index);
+            if (in_array($function, ['is_numeric', 'is_int', 'is_integer', 'is_long', 'is_float', 'is_double'], true)) {
+                $this->paramRequirements[$param]['elements'][$index]['numeric'] = true;
+            }
+            return;
+        }
+
+        $param = $this->paramVariableName($value);
+        if ($param !== null && $function === 'is_array') {
+            $this->ensureParam($param);
+            $this->paramRequirements[$param]['kind'] = 'array';
+        }
+    }
+
+    private function paramVariableName(Node $node): ?string
+    {
+        return $node instanceof Expr\Variable && is_string($node->name) ? $node->name : null;
+    }
+
+    /** @return array{0:string,1:int}|null */
+    private function paramDim(Node $node): ?array
+    {
+        if ($node instanceof Expr\ArrayDimFetch
+            && $node->var instanceof Expr\Variable
+            && is_string($node->var->name)
+            && $node->dim instanceof Scalar\Int_) {
+            return [$node->var->name, $node->dim->value];
+        }
+        return null;
+    }
+
+    private function ensureParam(string $name): void
+    {
+        if (!isset($this->paramRequirements[$name])) {
+            $this->paramRequirements[$name] = ['elements' => []];
+        }
+    }
+
+    private function ensureElement(string $name, int $index): void
+    {
+        $this->ensureParam($name);
+        if (!isset($this->paramRequirements[$name]['elements'][$index])) {
+            $this->paramRequirements[$name]['elements'][$index] = [];
         }
     }
 

@@ -81,6 +81,13 @@ final class DeserializationDetector implements DetectorInterface
             }
         }
 
+        if ($chain->literalSink) {
+            $notes[] = sprintf(
+                'sink argument is fixed: %s (chain reaches the sink; the argument is not attacker-controlled)',
+                $chain->literalSinkValue,
+            );
+        }
+
         return new Finding(
             type: $this->name(),
             title: $chain->entryClass->name . '::' . $chain->entryMethod->name,

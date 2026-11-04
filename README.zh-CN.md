@@ -222,6 +222,9 @@ payload 由 `src/Payload/Serializer.php` 直接按 PHP 序列化格式拼接，*
 - 参数回溯：sink 参数来自方法参数时，沿调用链反推最终要赋值的属性；调用点传的是常量时按不可控处理，不会产出没有 sink 值的链
 - 守卫条件：沿链收集"要走通被守卫的代码，属性必须满足什么"，并写进 payload。覆盖：与字面量的相等 / 不等 / 大小比较（`$this->is_admin === true`、`$this->token === 'admin_token'`、`$this->ttl <= 0`）、`isset` / `empty`、类型判断（`is_array`、`is_string`、`is_int`、`is_float`、`is_bool`、`is_null`、`is_numeric`、`is_iterable`）、真假判断（`if ($this->flag)` / `if (!$this->flag)`）、早退守卫（`if (...) { return; }`）以及 else 分支
 - `__unserialize(array $data)` 入口：`$data['cmd']` 视为攻击者可控数据，赋给属性后进 sink、或直接作为 sink 实参都能出链
+- 动态分发：`call_user_func([$this->handler, "do" . ucfirst($this->mode)], $this->param)` 以及经局部变量转存的同类写法，会按字面前缀匹配公开方法解析目标方法，并自动把拼方法名的属性写成对应值（`mode = execute`）；`call_user_func` 的实参转发用于把目标方法形参映射回属性
+- 方法形参约束：`is_array($args)`、`count($args) === 2`、`$args[0] == 'admin'`、`is_numeric($args[1])`、`intval($args[1]) > 1000` 会转换成转发进该形参的属性的数组值（`param = ['admin', 1001]`）
+- 常量 sink 实参：sink 参数是写死的字面量时（例如 `system("cat /flag")`），链仍会作为可达性链输出，并标注实参本身不可控；payload 只需要走到 sink
 - sink 分类：RCE、文件读写/删除/移动、文件包含、反序列化、可调用、环境、变量注入等
 - 统一输出：反序列化链和符号执行结果共用一种格式，文本报告是 `[N] [严重度] 标题  (类型/分类)`，后跟位置、sink、污点/路径、备注与 payload；JSON 统一放在 `findings` 数组里，字段包括 `type`、`severity`、`category`、`title`、`file`、`line`、`sink`、`taint`、`path`、`payload`、`notes`，以及 `chain`/`edges` 这类类型专属字段
 - payload 输出：文本报告与 JSON（带工具名与版本）；payload 可落盘，终端里 NUL 字节转义显示，`--output` 仍写原始字节
