@@ -27,11 +27,17 @@ final class GuardCollector
     /** @var array<string, mixed> */
     private array $requirements = [];
 
+    /** @var list<array{expr:string,expected:bool}> */
+    private array $conditions = [];
+
     private NodeFinder $finder;
+
+    private \PhpParser\PrettyPrinter\Standard $printer;
 
     public function __construct()
     {
         $this->finder = new NodeFinder();
+        $this->printer = new \PhpParser\PrettyPrinter\Standard();
     }
 
     /**
@@ -45,6 +51,12 @@ final class GuardCollector
             $this->walk($stmts);
         }
         return $this->requirements;
+    }
+
+    /** @return list<array{expr:string,expected:bool}> 原始条件表达式，供求解器使用 */
+    public function conditions(): array
+    {
+        return $this->conditions;
     }
 
     /** @param array<Node> $stmts */
@@ -143,6 +155,15 @@ final class GuardCollector
 
     private function applyCondition(Node $cond, bool $expected): void
     {
+        if ($cond instanceof Expr\BinaryOp || $cond instanceof Expr\BooleanNot
+            || $cond instanceof Expr\FuncCall || $cond instanceof Expr\Isset_
+            || $cond instanceof Expr\Empty_ || $this->isThisProperty($cond)) {
+            $this->conditions[] = [
+                'expr' => $this->printer->prettyPrintExpr($cond),
+                'expected' => $expected,
+            ];
+        }
+
         if ($cond instanceof Expr\BooleanNot) {
             $this->applyCondition($cond->expr, !$expected);
             return;

@@ -30,7 +30,7 @@ final class EngineRegistry
     public static function names(): array
     {
         $names = ['none'];
-        if (class_exists('PopChain\\Symbolic\\Engine')) {
+        if (class_exists('PopChain\\Symbolic\\SymbolicEngine')) {
             $names[] = 'builtin';
         }
         $names[] = 'external';
@@ -63,8 +63,8 @@ final class EngineRegistry
             return new ExternalEngine($command, (float) ($options['engine-timeout'] ?? 10));
         }
 
-        if ($key === 'builtin' && class_exists('PopChain\\Symbolic\\Engine')) {
-            $class = 'PopChain\\Symbolic\\Engine';
+        if ($key === 'builtin' && class_exists('PopChain\\Symbolic\\SymbolicEngine')) {
+            $class = 'PopChain\\Symbolic\\SymbolicEngine';
             /** @var EngineInterface $engine */
             $engine = new $class();
             return $engine;

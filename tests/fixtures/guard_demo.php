@@ -113,3 +113,19 @@ class GuardTruthyEntry
         system($this->cmd);
     }
 }
+
+// 两个嵌套守卫要求同一个属性等于不同值，路径不可满足
+class GuardConflictEntry
+{
+    public $mode = 'x';
+    public $cmd;
+
+    public function __destruct()
+    {
+        if ($this->mode === 'a') {
+            if ($this->mode === 'b') {
+                system($this->cmd);
+            }
+        }
+    }
+}

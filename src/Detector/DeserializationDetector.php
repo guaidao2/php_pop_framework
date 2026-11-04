@@ -68,11 +68,13 @@ final class DeserializationDetector implements DetectorInterface
 
             if ($result['status'] === 'sat') {
                 $chain->engineAssignments = $result['assignments'];
-                $notes[] = sprintf(
-                    'engine: sat (%d assignment%s)',
-                    count($result['assignments']),
-                    count($result['assignments']) === 1 ? '' : 's',
-                );
+                if ($result['assignments'] !== []) {
+                    $notes[] = sprintf(
+                        'engine: sat (%d assignment%s)',
+                        count($result['assignments']),
+                        count($result['assignments']) === 1 ? '' : 's',
+                    );
+                }
             } elseif ($result['status'] === 'unsat') {
                 $feasible = false;
                 $notes[] = 'engine: unsat (path constraints cannot be satisfied)';

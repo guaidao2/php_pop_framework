@@ -40,6 +40,7 @@ final class ChainConstraintSolver
             'nodes' => $chain->nodes(),
             'methods' => $this->methodPayloads($chain),
             'constraints' => $this->constraints($chain),
+            'guard_conditions' => $this->guardConditions($chain),
             'sink' => $chain->sink === null ? null : [
                 'function' => $chain->sink->function,
                 'category' => $chain->sink->category,
@@ -81,6 +82,32 @@ final class ChainConstraintSolver
                 'nodes' => [],
             ],
         ];
+    }
+
+    /**
+     * 链上各方法的守卫条件（表达式 + 期望真假），交给符号执行引擎判断可满足性。
+     *
+     * @return list<array{class:string,method:string,expr:string,expected:bool}>
+     */
+    private function guardConditions(Chain $chain): array
+    {
+        $conditions = [];
+        $append = static function (array &$out, ClassInfo $class, MethodInfo $method): void {
+            foreach ($method->guardConditions as $condition) {
+                $out[] = [
+                    'class' => $class->name,
+                    'method' => $method->name,
+                    'expr' => (string) ($condition['expr'] ?? ''),
+                    'expected' => (bool) ($condition['expected'] ?? true),
+                ];
+            }
+        };
+
+        $append($conditions, $chain->entryClass, $chain->entryMethod);
+        foreach ($chain->edges as $edge) {
+            $append($conditions, $edge->toClass, $edge->toMethod);
+        }
+        return $conditions;
     }
 
     /** @return list<array{class:string,method:string,property:string,value:mixed,line:int}> */

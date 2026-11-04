@@ -118,8 +118,12 @@ The project is organized as a framework rather than a single-purpose scanner:
   `PopChain\Symbolic`, shared autoloader): parser, symbolic interpreter,
   constraint solver, taint tracking and reporters. It is selected with
   `--type=symbolic` and its budget options are exposed as `--sym-*`.
-  `src/Engine` remains the adapter layer for plugging an additional engine into
-  the deserialization detector.
+- The same solver is used by the deserialization detector as the default
+  in-process engine (`PopChain\Symbolic\SymbolicEngine`): guard conditions collected from
+  a chain are translated into symbolic expressions and checked for
+  satisfiability; unsatisfiable chains are dropped, `unknown` results keep the
+  heuristic output. Use `--engine=none` to disable it. `src/Engine` also supports
+  external process engines.
   See [docs/symphp.md](docs/symphp.md) and
   [docs/symbolic-engine-protocol.md](docs/symbolic-engine-protocol.md).
 
@@ -170,7 +174,7 @@ popchain version
 | `--encode=url\|base64` | Encode the payload for direct copy/paste: `url` for a `?data=` query, `base64` for log-safe text; `--output` writes the encoded form too |
 | `--type=deserialization` | Detection type to run, see `--list-types` |
 | `--list-types` | List available detection types and exit |
-| `--engine=none\|external\|builtin` | Engine selection: in-process engine merged into the repo (`builtin`), external process, or none |
+| `--engine=none\|external` | Engine override: the built-in in-process solver is used by default, `none` disables it, `external` uses `--engine-cmd` |
 | `--engine-cmd=cmd` | External engine command: JSON request on stdin, JSON response on stdout |
 | `--engine-timeout=sec` | Engine timeout in seconds (default 10) |
 
@@ -226,7 +230,8 @@ The payload is assembled straight into PHP's serialization format by `src/Payloa
 - Guard conditions: while walking a chain, the tool collects what the properties must satisfy for the guarded code to run and writes those values into the payload. Covered: equality / inequality and ordering comparisons with literals (`$this->is_admin === true`, `$this->token === 'admin_token'`, `$this->ttl <= 0`), `isset` / `empty`, type checks (`is_array`, `is_string`, `is_int`, `is_float`, `is_bool`, `is_null`, `is_numeric`, `is_iterable`), plain truthiness (`if ($this->flag)` / `if (!$this->flag)`), early-return guards (`if (...) { return; }`) and else branches
 - `__unserialize(array $data)` entries: `$data['cmd']` reads are treated as attacker-controlled data, both when assigned to a property and when passed straight to a sink
 - Sink categories: RCE, file read/write/delete/move, file inclusion, deserialization, callable, environment, variable injection, and more
-- Payload output: textual chain paths, JSON (with tool name and version), payloads written to disk; NUL bytes are escaped on screen while `--output` keeps the raw bytes
+- Unified output: deserialization chains and symbolic findings share one format, both in the text report (`[N] [SEVERITY] title  (type/category)` followed by location, sink, taint/path, notes and payload) and in JSON (`findings` array with `type`, `severity`, `category`, `title`, `file`, `line`, `sink`, `taint`, `path`, `payload`, `notes` and type-specific fields such as `chain`/`edges`)
+- Payload output: textual reports and JSON (with tool name and version); payloads can be written to disk, NUL bytes are escaped on screen while `--output` keeps the raw bytes
 - Entry semantics: chains that start from `__invoke` / `__toString` / `__get` and other non-deserialization magic methods are marked as needing an external trigger, so a payload that only works when called is not mistaken for a standalone gadget
 - CLI guards: path and numeric option validation, with distinct exit codes (0 = chains found, 1 = no chains, 2 = bad input)
 

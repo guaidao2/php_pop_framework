@@ -17,7 +17,7 @@ use PopChain\Payload\PayloadBuilder;
  */
 final class Application
 {
-    public const VERSION = '2.3.0';
+    public const VERSION = '2.5.0';
 
     private const DEFAULT_ENTRIES = ['__destruct', '__wakeup', '__unserialize'];
 
@@ -90,6 +90,7 @@ final class Application
             'html_source_extracted' => '[i] URL looks like highlighted PHP source; extracted the source code from the HTML',
             'bad_encode' => '--encode only accepts url or base64, got: {value}',
             'available_types' => 'Available detection types:',
+            'no_findings' => 'No findings.',
             'unknown_type' => 'Unknown detection type: {type}. Available: {types}',
             'engine_infeasible' => 'engine marked chain as infeasible, skipped: {entry}',
             'engine_unavailable' => 'engine is not available, falling back to heuristics: {engine}',
@@ -122,6 +123,7 @@ final class Application
             'html_source_extracted' => '[i] URL 看起来是高亮后的 PHP 源码页，已从 HTML 里提取出源代码',
             'bad_encode' => '--encode 只接受 url 或 base64，当前值: {value}',
             'available_types' => '可用的检测类型:',
+            'no_findings' => '没有发现。',
             'unknown_type' => '未知检测类型: {type}，可用: {types}',
             'engine_infeasible' => '引擎判定链不可行，已跳过: {entry}',
             'engine_unavailable' => '引擎不可用，回退到启发式: {engine}',
@@ -394,7 +396,7 @@ Options:
   --obfuscate          Emit strings as S: hex escapes, hiding keywords from regex filters
   --encode=url|base64  Encode the payload for copy/paste: url for ?data=, base64 for log-safe text
                        (--output writes the encoded form as well)
-  --engine=none|external|builtin  In-process engine (merged into this repo) or external process engine
+  --engine=none|external  Engine override: none disables the built-in solver, external uses --engine-cmd
   --engine-cmd=cmd     External engine command: JSON request on stdin, JSON response on stdout
   --engine-timeout=sec Engine timeout in seconds (default: 10)
   --sym-timeout=sec    Symbolic engine time limit in seconds (default: 30)
@@ -462,7 +464,7 @@ php_pop_framework v{$version} — PHP 反序列化 POP 链自动生成器
   --obfuscate          字符串改用 S: 十六进制转义，绕过关键字过滤
   --encode=url|base64  payload 直接编码成可直接粘贴的形式：url 用于 ?data=，base64 便于文本传输
                        （--output 也写编码后的形式）
-  --engine=none|external|builtin  进程内引擎（合并进本仓库）或外部进程引擎
+  --engine=none|external  引擎覆盖：none 关闭内置求解器，external 配合 --engine-cmd 使用
   --engine-cmd=命令    外部引擎命令：stdin 收 JSON 请求，stdout 回 JSON 响应
   --engine-timeout=秒  引擎超时时间（默认 10 秒）
   --sym-timeout=秒      符号执行时间上限（默认 30 秒）
@@ -589,13 +591,19 @@ TXT;
         $engineCommand = self::option($options, 'engine-cmd');
         $engineName = strtolower((string) self::option($options, 'engine', ''));
         if ($engineName === '') {
-            $engineName = is_string($engineCommand) && $engineCommand !== '' ? 'external' : 'none';
+            if (is_string($engineCommand) && $engineCommand !== '') {
+                $engineName = 'external';
+            } elseif (class_exists('PopChain\Symbolic\SymbolicEngine')) {
+                $engineName = 'builtin';
+            } else {
+                $engineName = 'none';
+            }
         }
         $engine = EngineRegistry::create($engineName, [
             'engine-cmd' => $engineCommand,
             'engine-timeout' => (float) self::option($options, 'engine-timeout', 10),
         ]);
-        if ($engineName !== 'none' && !$engine->isAvailable()) {
+        if ($engineName === 'external' && !$engine->isAvailable()) {
             fwrite(STDERR, '[!] ' . self::t('engine_unavailable', ['engine' => $engineName]) . "\n");
         }
 
@@ -616,7 +624,7 @@ TXT;
             $warnings = $parser->warnings();
             if ($classes === []) {
                 fwrite(STDERR, '[!] ' . self::t('no_classes', ['path' => $label]) . "\n");
-                foreach ($parser->warnings() as $warning) {
+                foreach ($warnings as $warning) {
                     fwrite(STDERR, '[warn] ' . $warning . "\n");
                 }
                 return 2;
@@ -637,91 +645,116 @@ TXT;
             'sym_follow_includes' => !isset($options['sym-no-includes']),
         ]);
 
-        $chains = [];
-        $findingNotes = [];
-        $externalFindings = [];
-        foreach ($findings as $finding) {
-            if ($finding->chain === null) {
-                $externalFindings[] = $finding;
-                continue;
-            }
-            if (!$finding->feasible) {
-                fwrite(STDERR, '[!] ' . self::t('engine_infeasible', ['entry' => $finding->title]) . "\n");
-                continue;
-            }
-            $chains[] = $finding->chain;
-            $findingNotes[$finding->chain->signature()] = $finding->notes;
-        }
-
         $classFilter = self::option($options, 'class');
-        if (is_string($classFilter) && $classFilter !== '') {
-            $wanted = strtolower(ltrim($classFilter, '\\'));
-            $chains = array_values(array_filter(
-                $chains,
-                static fn (Chain $chain): bool => strtolower($chain->entryClass->name) === $wanted
-                    || strtolower($chain->entryClass->shortName()) === $wanted,
-            ));
-        }
-
         $sinkFilter = self::option($options, 'sink');
-        if (is_string($sinkFilter) && $sinkFilter !== '') {
-            $chains = array_values(array_filter(
-                $chains,
-                static fn (Chain $chain): bool => $chain->sink !== null
-                    && strcasecmp($chain->sink->function, $sinkFilter) === 0,
-            ));
-        }
-
         $builder = new PayloadBuilder($classes, (bool) self::option($options, 'obfuscate', false));
         $encode = strtolower((string) self::option($options, 'encode', ''));
         $legacyValue = self::option($options, 'cmd', null);
 
         $records = [];
-        foreach ($chains as $chain) {
-            $category = $chain->sink?->category;
-            $value = self::valueFor($category, $options, $legacyValue);
-            $payloadString = $builder->build($chain, $value);
-            $encodedPayload = self::encodePayload($payloadString, $encode);
+        foreach ($findings as $finding) {
+            if (!$finding->feasible) {
+                fwrite(STDERR, '[!] ' . self::t('engine_infeasible', ['entry' => $finding->title]) . "\n");
+                continue;
+            }
+
+            $chain = $finding->chain;
+            if ($chain !== null) {
+                if (!self::chainMatchesFilters($chain, $classFilter, $sinkFilter)) {
+                    continue;
+                }
+
+                $category = $chain->sink?->category;
+                $payloadString = $builder->build($chain, self::valueFor($category, $options, $legacyValue));
+                $notes = $finding->notes;
+                if (!in_array(strtolower($chain->entryMethod->name), self::DESERIALIZE_ENTRIES, true)) {
+                    $notes[] = self::t('external_entry');
+                }
+                if ($chain->sink !== null && !$builder->sinkValueWritten) {
+                    $notes[] = self::t('incomplete_payload');
+                }
+                if ($builder->wakeupBypassUsed) {
+                    $notes[] = self::t('wakeup_bypass');
+                }
+
+                $records[] = [
+                    'type' => 'deserialization',
+                    'severity' => self::severityFor($category),
+                    'category' => $category,
+                    'title' => implode(' -> ', $chain->nodes()),
+                    'file' => $chain->entryClass->file,
+                    'line' => $chain->entryClass->line,
+                    'chain' => $chain->nodes(),
+                    'edges' => array_map(static fn ($edge): array => [
+                        'from' => $edge->fromClass->name . '::' . $edge->fromMethod->name,
+                        'to' => $edge->toClass->name . '::' . $edge->toMethod->name,
+                        'via' => $edge->viaKind,
+                        'property' => $edge->viaProperty,
+                        'line' => $edge->line,
+                    ], $chain->edges),
+                    'sink' => $chain->sink === null ? null : [
+                        'function' => $chain->sink->function,
+                        'category' => $chain->sink->category,
+                        'position' => $chain->sink->position,
+                        'arg' => $chain->sink->arg->describe(),
+                        'display' => sprintf(
+                            '%s() %s #%d <- %s',
+                            $chain->sink->function,
+                            self::t('arg'),
+                            $chain->sink->position,
+                            $chain->sink->arg->describe(),
+                        ),
+                    ],
+                    'taint' => [],
+                    'path' => [],
+                    'payload' => $payloadString,
+                    'payload_encoded' => self::encodePayload($payloadString, $encode),
+                    'notes' => $notes,
+                    'snippet' => '',
+                ];
+                continue;
+            }
+
+            if (!self::symbolicMatchesFilters($finding, $sinkFilter)) {
+                continue;
+            }
+
             $records[] = [
-                'entry' => $chain->entryClass->name . '::' . $chain->entryMethod->name,
-                'standalone' => in_array(strtolower($chain->entryMethod->name), self::DESERIALIZE_ENTRIES, true),
-                'nodes' => $chain->nodes(),
-                'edges' => array_map(static fn ($edge): array => [
-                    'from' => $edge->fromClass->name . '::' . $edge->fromMethod->name,
-                    'to' => $edge->toClass->name . '::' . $edge->toMethod->name,
-                    'via' => $edge->viaKind,
-                    'property' => $edge->viaProperty,
-                    'line' => $edge->line,
-                ], $chain->edges),
-                'sink' => $chain->sink === null ? null : [
-                    'function' => $chain->sink->function,
-                    'category' => $chain->sink->category,
-                    'position' => $chain->sink->position,
-                    'arg' => $chain->sink->arg->describe(),
-                ],
-                'payload' => $payloadString,
-                'payload_encoded' => $encodedPayload,
-                'payload_complete' => $builder->sinkValueWritten,
-                'needs_wakeup_bypass' => $builder->wakeupBypassUsed,
-                'engine_notes' => $findingNotes[$chain->signature()] ?? [],
+                'type' => 'symbolic',
+                'severity' => $finding->severity,
+                'category' => $finding->category,
+                'title' => $finding->title,
+                'file' => $finding->file,
+                'line' => $finding->line,
+                'chain' => [],
+                'edges' => [],
+                'sink' => $finding->sink === '' ? null : ['display' => $finding->sink],
+                'taint' => $finding->taint,
+                'path' => $finding->path,
+                'payload' => $finding->payload,
+                'payload_encoded' => self::encodePayload($finding->payload, $encode),
+                'notes' => $finding->notes,
+                'snippet' => $finding->snippet,
             ];
         }
 
+        $jsonDocument = [
+            'tool' => 'php_pop_framework',
+            'version' => self::VERSION,
+            'path' => $label,
+            'findings' => $records,
+            'warnings' => $warnings,
+        ];
+
         $outputFile = self::option($options, 'output');
         if (is_string($outputFile) && $outputFile !== '') {
-            $jsonPayload = [
-                'tool' => 'php_pop_framework',
-                'version' => self::VERSION,
-                'path' => $label,
-                'chains' => $records,
-                'findings' => array_map(static fn (Finding $finding): array => $finding->toArray(), $externalFindings),
-            ];
             $content = self::option($options, 'json', false)
-                ? json_encode($jsonPayload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
-                : implode("
-", array_column($records, 'payload_encoded'));
-            if (@file_put_contents($outputFile, $content . "
-") === false) {
+                ? json_encode($jsonDocument, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
+                : implode("\n", array_values(array_filter(
+                    array_map(static fn (array $record): string => (string) ($record['payload_encoded'] ?? ''), $records),
+                    static fn (string $line): bool => $line !== '',
+                )));
+            if (@file_put_contents($outputFile, $content . "\n") === false) {
                 fwrite(STDERR, '[!] ' . self::t('output_failed', ['file' => $outputFile]) . "\n");
                 return 2;
             }
@@ -729,15 +762,8 @@ TXT;
         }
 
         if (self::option($options, 'json', false)) {
-            echo json_encode([
-                'tool' => 'php_pop_framework',
-                'version' => self::VERSION,
-                'path' => $label,
-                'chains' => $records,
-                'findings' => array_map(static fn (Finding $finding): array => $finding->toArray(), $externalFindings),
-                'warnings' => $warnings,
-            ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), "\n";
-            return ($records === [] && $externalFindings === []) ? 1 : 0;
+            echo json_encode($jsonDocument, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), "\n";
+            return $records === [] ? 1 : 0;
         }
 
         echo self::t('scanning', ['path' => $label]), "\n";
@@ -747,33 +773,35 @@ TXT;
         }
         echo "\n";
 
-        if ($records === [] && $externalFindings === []) {
-            echo self::t('no_chains'), "\n";
-            echo self::t('try_entries'), "\n";
-            echo self::t('try_depth'), "\n";
-            echo self::t('try_class'), "\n";
+        if ($records === []) {
+            if ($type === 'deserialization') {
+                echo self::t('no_chains'), "\n";
+                echo self::t('try_entries'), "\n";
+                echo self::t('try_depth'), "\n";
+                echo self::t('try_class'), "\n";
+            } else {
+                echo self::t('no_findings'), "\n";
+            }
             return 1;
         }
 
         foreach ($records as $index => $record) {
-            printf("[%d] %s
-", $index + 1, implode(' → ', $record['nodes']));
-            if (!$record['standalone']) {
-                echo '    ', self::t('external_entry'), "\n";
+            printf(
+                "[%d] [%s] %s  (%s/%s)\n",
+                $index + 1,
+                strtoupper((string) $record['severity']),
+                $record['title'],
+                $record['type'],
+                (string) ($record['category'] ?? ''),
+            );
+
+            if ((string) ($record['file'] ?? '') !== '') {
+                printf("    %s:%d\n", $record['file'], (int) ($record['line'] ?? 0));
             }
-            if ($record['sink'] !== null && !$record['payload_complete']) {
-                echo '    ', self::t('incomplete_payload'), "\n";
-            }
-            if ($record['needs_wakeup_bypass']) {
-                echo '    ', self::t('wakeup_bypass'), "\n";
-            }
-            foreach ($record['engine_notes'] as $engineNote) {
-                echo '    ', $engineNote, "\n";
-            }
+
             foreach ($record['edges'] as $edge) {
                 printf(
-                    "    %s %-14s \$this->%-14s %s:%d
-",
+                    "    %s %-14s \$this->%-14s %s:%d\n",
                     self::t('via'),
                     $edge['via'],
                     $edge['property'],
@@ -781,49 +809,24 @@ TXT;
                     $edge['line'],
                 );
             }
-            if ($record['sink'] !== null) {
-                printf(
-                    "    sink %-8s %s() %s #%d ← %s
-",
-                    $record['sink']['category'],
-                    $record['sink']['function'],
-                    self::t('arg'),
-                    $record['sink']['position'],
-                    $record['sink']['arg'],
-                );
-            }
-            echo '    payload: ', self::displayable($record['payload_encoded']), "
 
-";
-        }
-
-        foreach ($externalFindings as $index => $finding) {
-            printf(
-                "[F%d] [%s] %s  %s
-",
-                $index + 1,
-                strtoupper($finding->severity),
-                $finding->title,
-                $finding->category,
-            );
-            if ($finding->file !== '') {
-                printf("    %s:%d
-", $finding->file, $finding->line);
+            if (($record['taint'] ?? []) !== []) {
+                echo '    taint: ', implode(', ', $record['taint']), "\n";
             }
-            if ($finding->sink !== '') {
-                echo '    sink: ', $finding->sink, "\n";
+            if (($record['path'] ?? []) !== []) {
+                echo '    path: ', implode(' && ', $record['path']), "\n";
             }
-            if ($finding->taint !== []) {
-                echo '    taint: ', implode(', ', $finding->taint), "\n";
+            if ($record['sink'] !== null && isset($record['sink']['display'])) {
+                echo '    sink: ', $record['sink']['display'], "\n";
             }
-            if ($finding->path !== []) {
-                echo '    path: ', implode(' && ', $finding->path), "\n";
+            foreach ($record['notes'] as $note) {
+                echo '    ', $note, "\n";
             }
-            if ($finding->payload !== '') {
-                echo '    payload: ', $finding->payload, "\n";
+            if ((string) ($record['payload_encoded'] ?? '') !== '') {
+                echo '    payload: ', self::displayable($record['payload_encoded']), "\n";
             }
-            if ($finding->snippet !== '') {
-                echo '    | ', trim($finding->snippet), "\n";
+            if ((string) ($record['snippet'] ?? '') !== '') {
+                echo '    | ', trim($record['snippet']), "\n";
             }
             echo "\n";
         }
@@ -833,6 +836,47 @@ TXT;
         }
 
         return 0;
+    }
+
+    private static function chainMatchesFilters(Chain $chain, mixed $classFilter, mixed $sinkFilter): bool
+    {
+        if (is_string($classFilter) && $classFilter !== '') {
+            $wanted = strtolower(ltrim($classFilter, '\\'));
+            $name = strtolower($chain->entryClass->name);
+            $short = strtolower($chain->entryClass->shortName());
+            if ($name !== $wanted && $short !== $wanted) {
+                return false;
+            }
+        }
+
+        if (is_string($sinkFilter) && $sinkFilter !== '') {
+            if ($chain->sink === null || strcasecmp($chain->sink->function, $sinkFilter) !== 0) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static function symbolicMatchesFilters(Finding $finding, mixed $sinkFilter): bool
+    {
+        if (!is_string($sinkFilter) || $sinkFilter === '') {
+            return true;
+        }
+
+        $function = strtolower(trim((string) strtok($finding->sink, '(')));
+        return $function === strtolower($sinkFilter)
+            || str_contains(strtolower($finding->sink), strtolower($sinkFilter));
+    }
+
+    private static function severityFor(?string $category): string
+    {
+        return match ($category) {
+            'rce', 'deserialize' => 'critical',
+            'file_write', 'file_delete', 'file_move', 'file_copy', 'file_perms', 'include', 'ssrf' => 'high',
+            'file_read', 'env', 'var', 'mail' => 'medium',
+            default => 'high',
+        };
     }
 
     /** @return list<string> */

@@ -10,12 +10,17 @@ heuristic analysis and says so.
 ### A. In-process engine (primary path)
 
 The engine code is merged into this repository, so no JSON is involved.
+The default implementation is `PopChain\Symbolic\SymbolicEngine`: it translates the
+guard expressions collected from a chain into SymPHP expressions and checks them
+with the built-in solver. It is selected automatically when available; pass
+`--engine=none` to turn it off.
+
+Adding another in-process engine:
 
 1. Put the code under `src/Symbolic/` with namespace `PopChain\Symbolic`
    (the autoloader maps `PopChain\` to `src/`, so no extra registration is needed).
-2. Implement `PopChain\Engine\EngineInterface` (typically as
-   `PopChain\Symbolic\Engine`).
-3. Select it with `--engine=builtin`, or register any other name:
+2. Implement `PopChain\Engine\EngineInterface`.
+3. Select it with `--engine=<name>`, or register any other name:
 
 ```php
 \PopChain\Engine\EngineRegistry::register('my-engine', \PopChain\Symbolic\MyEngine::class);
@@ -91,6 +96,9 @@ ignored. A non-zero exit status, a timeout, or invalid JSON is treated as
       }
     }
   ],
+  "guard_conditions": [
+    { "class": "App", "method": "__destruct", "expr": "$this->is_admin === true", "expected": true }
+  ],
   "constraints": [
     {
       "class": "App",
@@ -117,6 +125,12 @@ Field notes:
 - `constraints` are the guard values collected by the heuristic pass. They are
   hints, not the whole path condition; the engine is expected to derive the
   real constraints from the CFG.
+- `guard_conditions` is a list of `{class, method, expr, expected}` entries: the
+  raw guard expressions with the truth value required to reach the chain. The
+  built-in engine translates these expressions and checks whether their
+  conjunction is satisfiable. An expression that appears with both
+  `expected: true` and `expected: false` is treated as an alternative branch and
+  ignored.
 - `sink` describes what the chain is trying to reach.
 
 ## Response

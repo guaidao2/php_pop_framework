@@ -283,6 +283,7 @@ final class ProjectParser
         }
 
         $name = $node->name->toString();
+        $guardCollector = new GuardCollector();
         $method = new MethodInfo(
             name: $name,
             visibility: $this->visibility($node),
@@ -294,8 +295,9 @@ final class ProjectParser
             declaringClass: $declaringClass,
             stringUses: $stringUses,
             constantProperties: $collector?->constantProperties() ?? [],
-            preconditions: (new GuardCollector())->collect($node->stmts),
+            preconditions: $guardCollector->collect($node->stmts),
             cfg: (new \PopChain\Ir\CfgBuilder())->build($declaringClass, $name, $node->stmts, $node->getStartLine()),
+            guardConditions: $guardCollector->conditions(),
         );
 
         return $method;

@@ -56,26 +56,22 @@ composer install
 输出示例：
 
 ```
-Symbolic engine — PHP Symbolic Execution / Taint Analysis
-Target: examples/vuln
-Files: 8   Paths: 9   Statements: 41   Pruned states: 1   Unknown checks: 0   Time: 0.02s
+[1] [CRITICAL] OS Command Injection  (symbolic/RCE)
+    examples/symbolic/vuln/rce.php:9
+    taint: $_POST['cmd']
+    path: (strlen($_POST['cmd']) > 0)
+    sink: system()
+    payload: id
+    | system($cmd);
 
-[CRITICAL] OS Command Injection  RCE
-  .../examples/vuln/rce.php:9
-  sink: system()
-  taint: $_POST['cmd']
-  path: (strlen($_POST['cmd']) > 0)
-  payload: id
-  | system($cmd);
-
-[HIGH] Reflected XSS  XSS
-  .../examples/vuln/xss.php:9
-  sink: echo()
-  taint: $_GET['name']
-  path: (strlen($_GET['name']) > 0)
-  payload: <script>alert(document.domain)</script>
-  | echo '<h1>Hello, ' . $name . '</h1>';
+[2] [HIGH] Reflected XSS  (symbolic/XSS)
+    examples/symbolic/vuln/xss.php:9
+    taint: $_GET['name']
+    sink: echo()
+    payload: <script>alert(document.domain)</script>
 ```
+
+输出格式与反序列化检测统一：`[序号] [严重度] 标题  (类型/分类)`，后跟位置、污点/路径、sink、备注和 payload；JSON 里统一是 `findings` 数组。
 
 ### 引擎相关选项
 

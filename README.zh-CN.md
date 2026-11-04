@@ -113,8 +113,11 @@ URL 可以直接是纯 PHP 源码；如果是 `highlight_file` / `highlight_stri
 - `src/Payload` 负责把链变成序列化 payload；
 - `src/Symbolic` 是原生合并的 **SymPHP** 引擎（命名空间 `PopChain\Symbolic`，与项目共用
   自动加载）：解析器、符号解释器、约束求解器、污点跟踪和报告器。通过 CLI 的
-  `--type=symbolic` 使用，预算参数以 `--sym-*` 暴露。`src/Engine` 仍然是适配层，
-  用来给反序列化检测器接额外的引擎。详见 [docs/symphp.md](docs/symphp.md) 和
+  `--type=symbolic` 使用，预算参数以 `--sym-*` 暴露。
+- 同一套求解器也作为反序列化检测器的默认进程内引擎（`PopChain\Symbolic\SymbolicEngine`）：
+  链上收集到的守卫条件会翻译成符号表达式做可满足性检查，UNSAT 的链直接丢弃，
+  UNKNOWN 保持原结果。用 `--engine=none` 可以关掉。`src/Engine` 另支持外部进程引擎。
+  详见 [docs/symphp.md](docs/symphp.md) 和
   [docs/symbolic-engine-protocol.md](docs/symbolic-engine-protocol.md)。
 
 ```
@@ -164,7 +167,7 @@ popchain version
 | `--encode=url\|base64` | payload 直接编码，方便复制粘贴：`url` 用于 `?data=`，`base64` 便于文本传输；`--output` 也写编码后的形式 |
 | `--type=deserialization` | 要运行的检测类型，见 `--list-types` |
 | `--list-types` | 列出可用检测类型后退出 |
-| `--engine=none\|external\|builtin` | 引擎选择：进程内引擎（`builtin`，代码合并进仓库）、外部进程、或不启用 |
+| `--engine=none\|external` | 引擎覆盖：内置进程内求解器默认启用，`none` 关闭，`external` 配合 `--engine-cmd` 使用 |
 | `--engine-cmd=命令` | 外部引擎命令：stdin 收 JSON 请求，stdout 回 JSON 响应 |
 | `--engine-timeout=秒` | 引擎超时时间（默认 10 秒） |
 
@@ -220,7 +223,8 @@ payload 由 `src/Payload/Serializer.php` 直接按 PHP 序列化格式拼接，*
 - 守卫条件：沿链收集"要走通被守卫的代码，属性必须满足什么"，并写进 payload。覆盖：与字面量的相等 / 不等 / 大小比较（`$this->is_admin === true`、`$this->token === 'admin_token'`、`$this->ttl <= 0`）、`isset` / `empty`、类型判断（`is_array`、`is_string`、`is_int`、`is_float`、`is_bool`、`is_null`、`is_numeric`、`is_iterable`）、真假判断（`if ($this->flag)` / `if (!$this->flag)`）、早退守卫（`if (...) { return; }`）以及 else 分支
 - `__unserialize(array $data)` 入口：`$data['cmd']` 视为攻击者可控数据，赋给属性后进 sink、或直接作为 sink 实参都能出链
 - sink 分类：RCE、文件读写/删除/移动、文件包含、反序列化、可调用、环境、变量注入等
-- payload 输出：文本链路径、JSON（带工具名与版本）、payload 落盘；终端里 NUL 字节转义显示，`--output` 仍写原始字节
+- 统一输出：反序列化链和符号执行结果共用一种格式，文本报告是 `[N] [严重度] 标题  (类型/分类)`，后跟位置、sink、污点/路径、备注与 payload；JSON 统一放在 `findings` 数组里，字段包括 `type`、`severity`、`category`、`title`、`file`、`line`、`sink`、`taint`、`path`、`payload`、`notes`，以及 `chain`/`edges` 这类类型专属字段
+- payload 输出：文本报告与 JSON（带工具名与版本）；payload 可落盘，终端里 NUL 字节转义显示，`--output` 仍写原始字节
 - 入口语义：从 `__invoke` / `__toString` / `__get` 等非反序列化魔术方法起步的链会被标注"需要外部触发"，避免把必须被调用才生效的 payload 当成独立 gadget
 - CLI 校验：路径与数值选项校验，退出码清晰（0 找到链、1 未找到链、2 输入不合法）
 

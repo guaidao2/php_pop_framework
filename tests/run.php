@@ -588,17 +588,26 @@ $symbolicJson = ob_get_clean();
 $symbolicDecoded = json_decode($symbolicJson, true);
 check('符号执行结果可 JSON 输出', is_array($symbolicDecoded)
     && is_array($symbolicDecoded['findings'] ?? null)
-    && ($symbolicDecoded['findings'][0]['category'] ?? '') === 'RCE', $symbolicJson);
+    && ($symbolicDecoded['findings'][0]['category'] ?? '') === 'RCE'
+    && ($symbolicDecoded['findings'][0]['type'] ?? '') === 'symbolic'
+    && ($symbolicDecoded['findings'][0]['severity'] ?? '') !== '', $symbolicJson);
+check('符号执行文本使用统一格式', str_contains($symbolicOut, '(symbolic/RCE)'), $symbolicOut);
 
 ob_start();
 $exit = Application::run(['popchain', 'find', __DIR__ . '/../examples/symbolic/vuln/safe.php', '--type=symbolic']);
 $safeOut = ob_get_clean();
-check('安全样例不报漏洞', $exit === 1 && !str_contains($safeOut, '[F1]'), $safeOut);
+check('安全样例不报漏洞', $exit === 1 && !str_contains($safeOut, 'OS Command Injection'), $safeOut);
 
 ob_start();
 Application::run(['popchain', '--list-types']);
 $typesOut2 = ob_get_clean();
 check('--list-types 包含 symbolic', str_contains($typesOut2, 'symbolic'), $typesOut2);
+
+ob_start();
+$exit = Application::run(['popchain', 'find', __DIR__ . '/fixtures/guard_demo.php']);
+$conflictOut = ob_get_clean();
+check('内置引擎能剪掉矛盾守卫的链', !str_contains($conflictOut, 'GuardConflictEntry'), $conflictOut);
+check('可满足的守卫链仍然保留', str_contains($conflictOut, 'GuardEntry'), $conflictOut);
 
 echo "== CLI ==\n";
 ob_start();
@@ -627,8 +636,15 @@ ob_start();
 Application::run(['popchain', 'find', __DIR__ . '/../examples/demo.php', '--json']);
 $jsonOutput = ob_get_clean();
 $decoded = json_decode($jsonOutput, true);
-check('--json 输出可解析且包含 2 条链', is_array($decoded) && count($decoded['chains'] ?? []) === 2);
+check('--json 输出可解析且包含 2 条结果', is_array($decoded) && count($decoded['findings'] ?? []) === 2);
 check('--json 带工具名与版本', ($decoded['tool'] ?? '') === 'php_pop_framework' && ($decoded['version'] ?? '') === Application::VERSION);
+check('统一 JSON 字段齐全', isset(
+    $decoded['findings'][0]['type'],
+    $decoded['findings'][0]['severity'],
+    $decoded['findings'][0]['category'],
+    $decoded['findings'][0]['sink']['display'],
+    $decoded['findings'][0]['payload'],
+) && $decoded['findings'][0]['type'] === 'deserialization');
 
 echo "== CLI 健壮性 ==\n";
 ob_start();
